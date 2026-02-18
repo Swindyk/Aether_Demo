@@ -1,0 +1,41 @@
+﻿:root {
+  color-scheme: dark;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #05070b;
+  color: #ffffff;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.35);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(45, 212, 191, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(45, 212, 191, 0.5);
+}

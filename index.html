@@ -1,0 +1,57 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Aether</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap"
+      rel="stylesheet"
+    >
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
+              display: ['Chakra Petch', 'Noto Serif SC', 'sans-serif'],
+              mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+            },
+            colors: {
+              aether: {
+                50: '#f0fdfa',
+                100: '#ccfbf1',
+                400: '#2dd4bf',
+                500: '#14b8a6',
+                600: '#0d9488',
+                900: '#134e4a',
+                950: '#042f2e',
+              },
+            },
+            animation: {
+              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'scan-line': 'scan 2s linear infinite',
+              'float-slow': 'float 6s ease-in-out infinite',
+            },
+            keyframes: {
+              scan: {
+                '0%': { top: '0%' },
+                '100%': { top: '100%' },
+              },
+              float: {
+                '0%, 100%': { transform: 'translateY(0px)' },
+                '50%': { transform: 'translateY(-8px)' },
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="/index.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

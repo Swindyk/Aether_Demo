@@ -368,7 +368,7 @@ export const PlayerHome: React.FC = () => {
               <span>我来看看</span>
             </h2>
             <p className="mt-5 max-w-lg text-sm leading-7 text-white/60">
-              不用切出去翻攻略，按一下，让以太先看懂你卡在哪。
+              不用切出去翻攻略，按一下Alt+Q，让以太先看懂你卡在哪。
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <button onClick={analyzeNow} disabled={Boolean(busy) || status.state === 'capturing' || status.state === 'analyzing'} className="flex items-center gap-2 rounded-2xl bg-aether-300 px-6 py-3 text-sm font-semibold text-[#071018] shadow-[0_12px_32px_rgba(45,212,191,0.25)] transition hover:bg-aether-200 disabled:opacity-50">

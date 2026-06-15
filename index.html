@@ -1,57 +1,20 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Project Aether</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link
-      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap"
-      rel="stylesheet"
-    >
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
-              display: ['Chakra Petch', 'Noto Serif SC', 'sans-serif'],
-              mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
-            },
-            colors: {
-              aether: {
-                50: '#f0fdfa',
-                100: '#ccfbf1',
-                400: '#2dd4bf',
-                500: '#14b8a6',
-                600: '#0d9488',
-                900: '#134e4a',
-                950: '#042f2e',
-              },
-            },
-            animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'scan-line': 'scan 2s linear infinite',
-              'float-slow': 'float 6s ease-in-out infinite',
-            },
-            keyframes: {
-              scan: {
-                '0%': { top: '0%' },
-                '100%': { top: '100%' },
-              },
-              float: {
-                '0%, 100%': { transform: 'translateY(0px)' },
-                '50%': { transform: 'translateY(-8px)' },
-              },
-            },
-          },
-        },
-      };
-    </script>
-    <link rel="stylesheet" href="/index.css">
+    <title>以太 AI 游戏伴侣</title>
+    <link rel="stylesheet" href="./index.css">
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <div id="root">
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#071018;color:#bffcf4;font-family:'Microsoft YaHei',sans-serif;">
+        <div style="text-align:center;border:1px solid rgba(94,234,212,.22);border-radius:24px;padding:28px 34px;background:rgba(255,255,255,.035);">
+          <div style="font-size:18px;font-weight:700;margin-bottom:8px;">以太正在启动</div>
+          <div style="font-size:13px;color:rgba(255,255,255,.55);">如果长时间停留在这里，请退出托盘后重新打开。</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>

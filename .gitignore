@@ -1,4 +1,11 @@
 ﻿node_modules/
 dist/
 .env
+.env.*
+!.env.example
 *.log
+release/
+release-*/
+.aether-test-data/
+design-assets/
+tmp/

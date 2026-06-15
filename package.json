@@ -1,23 +1,69 @@
 {
   "name": "project-aether---ai-game-companion",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "以太 AI 游戏旅伴",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:desktop\"",
+    "dev:web": "vite --host 127.0.0.1 --port 3000",
+    "dev:desktop": "wait-on http://127.0.0.1:3000 && node electron/launch.cjs",
+    "desktop": "node electron/launch.cjs",
+    "build": "node electron/clean-renderer.cjs && vite build && node electron/prune-renderer-assets.cjs",
+    "pack": "npm run build && node electron/pack.cjs",
+    "pack:portfolio": "npm run build && node electron/pack.cjs --portfolio",
+    "test": "node --test electron/*.test.cjs",
+    "eval:rag": "node electron/rag-eval.cjs",
+    "test:live": "node electron/launch.cjs electron/live-smoke.cjs",
+    "test:capture": "node electron/launch.cjs electron/screen-capture-smoke.cjs",
+    "test:ui": "npm run build && node electron/launch.cjs electron/ui-smoke.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "recharts": "^3.7.0"
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^10.0.3",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "cn.aether.game.companion",
+    "productName": "以太AI游戏伴侣",
+    "asar": true,
+    "files": [
+      "dist/renderer/**/*",
+      "electron/**/*",
+      "!electron/*.test.cjs",
+      "!electron/*-smoke.cjs",
+      "!electron/rag-eval.cjs",
+      "!electron/rag-eval-dataset.json",
+      "!electron/*.py",
+      "!electron/clean-renderer.cjs",
+      "!electron/prune-renderer-assets.cjs",
+      "!electron/launch.cjs",
+      "!electron/pack.cjs",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "build/aether-icon.ico",
+      "target": [
+        "portable"
+      ]
+    }
   }
 }

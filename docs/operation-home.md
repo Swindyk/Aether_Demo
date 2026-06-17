@@ -60,4 +60,4 @@
 
 ## 图片占位
 
-首页截图放这里：`docs/assets/home.png`
+![首页截图](docs/assets/home.png)

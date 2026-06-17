@@ -48,4 +48,4 @@
 
 ## 图片占位
 
-后台主界面放这里：`docs/assets/dashboard.png`
+![后台界面](docs/assets/dashboard.png)

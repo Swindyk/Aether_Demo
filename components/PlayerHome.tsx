@@ -225,25 +225,12 @@ export const PlayerHome: React.FC = () => {
 
   const askPainPoint = async (item: typeof painPoints[number]) => {
     if (!window.aether || busy) return;
-    setBusy('scan');
-    setNotice('');
     try {
       const settings = await window.aether.updateSettings({ selectedScene: item.id });
       setState(previous => previous ? { ...previous, settings } : previous);
-      const run = await window.aether.runAgent({
-        query: item.prompt,
-        persona: settings.persona,
-        scene: item.id,
-        mode: 'scan',
-        includeVision: true,
-        analysisMode: 'deep',
-      });
-      await refresh();
-      setNotice(run.source === 'error' ? '这次没看清，换无边框窗口后再试' : '已按这个问题解读当前画面');
+      setNotice(`已选中：“${item.title}”。点击“让我看看”后开始解读。`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '这次没有完成画面解读');
-    } finally {
-      setBusy('');
     }
   };
 

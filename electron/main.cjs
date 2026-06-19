@@ -1,4 +1,4 @@
-const crypto = require('node:crypto');
+﻿const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
@@ -22,13 +22,20 @@ const { DEFAULT_LOCAL_MODEL, resolveModelConfig } = require('./model-config.cjs'
 
 const DEV_URL = 'http://127.0.0.1:3000';
 const MODEL_ID = DEFAULT_LOCAL_MODEL;
-const SETTINGS_VERSION = 7;
+const SETTINGS_VERSION = 8;
 const DEMO_SCENES = [
   { id: 'demo:gear', scene: 'gear', name: '原神 · 装备搭配', file: 'genshin-weapon.png' },
   { id: 'demo:roster', scene: 'roster', name: '原神 · 队伍配置', file: 'genshin-roster.png' },
   { id: 'demo:story', scene: 'story', name: '星穹铁道 · 剧情回顾', file: 'hsr-story.png' },
   { id: 'demo:explore', scene: 'explore', name: '星穹铁道 · 探索指引', file: 'hsr-explore.png' },
 ];
+const DEFAULT_SCAN_PROMPT = '请看懂当前画面，告诉我最值得注意的可见信息，并给出两步以内的下一步建议。';
+const SCAN_PROMPTS = {
+  gear: '帮我判断当前装备值不值得换，直接给结论和下一步。',
+  roster: '帮我看这套队伍能不能打，指出最大问题和调整建议。',
+  story: '帮我解释当前剧情人物和线索，不要剧透后续内容。',
+  explore: '我卡点了，帮我根据当前画面找下一步线索。',
+};
 
 let controlWindow;
 let answerWindow;
@@ -46,7 +53,7 @@ let currentConversationId;
 let currentAccountKey = 'local:default';
 let assistantStatus = {
   state: 'idle',
-  message: '按 Alt+Q 解读当前画面',
+  message: '等待中',
   shortcutReady: false,
   updatedAt: Date.now(),
 };
@@ -92,7 +99,7 @@ const safeRemove = target => {
   try {
     fs.rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
   } catch {
-    // 缓存清理失败不应阻止应用启动。
+    // Cache cleanup failures should not block startup.
   }
 };
 
@@ -293,7 +300,7 @@ const createAgentOpsWindow = () => {
     return;
   }
   agentOpsWindow = new BrowserWindow({
-    title: '以太 AgentOps',
+    title: '以太后台',
     autoHideMenuBar: true,
     width: 1440,
     height: 920,
@@ -310,18 +317,22 @@ const createAgentOpsWindow = () => {
 
 const restoreAssistantAfterCapture = visibility => {
   if (visibility.control) controlWindow?.showInactive();
+  if (visibility.answer) answerWindow?.showInactive();
   if (visibility.agentOps) agentOpsWindow?.showInactive();
 };
 
 const hideAssistantForCapture = async () => {
+  const delayMs = 520;
   const visibility = {
     control: Boolean(controlWindow?.isVisible()),
+    answer: Boolean(answerWindow?.isVisible()),
     agentOps: Boolean(agentOpsWindow?.isVisible()),
+    delayMs,
   };
   answerWindow?.hide();
   controlWindow?.hide();
   agentOpsWindow?.hide();
-  if (visibility.control || visibility.agentOps) await delay(220);
+  if (visibility.control || visibility.answer || visibility.agentOps) await delay(delayMs);
   return visibility;
 };
 
@@ -377,7 +388,7 @@ const runUiSmoke = async outputDir => {
     throw new Error(`短答案卡能力不符合约束：${JSON.stringify(answerState)}`);
   }
   await saveWindowCapture(answerWindow, path.join(outputDir, 'answer-card.png'));
-  console.log(`UI 冒烟截图已写入 ${outputDir}`);
+  console.log(`UI 冒烟截图已写入：${outputDir}`);
   quitting = true;
   clearTimeout(answerHideTimer);
   knowledgeService?.close();
@@ -420,6 +431,7 @@ const refreshTrayMenu = () => {
     { label: '查看最近回答  Alt+Shift+Q', click: () => showLatestAnswer() },
     { type: 'separator' },
     { label: '打开以太', click: () => showControlWindow() },
+    { label: '打开后台', click: () => createAgentOpsWindow() },
     { label: trayStatusLabel(), enabled: false },
     { label: `模型：${runtime?.status().model || MODEL_ID}`, enabled: false },
     { type: 'separator' },
@@ -450,6 +462,13 @@ const getDemoImage = sceneId => {
     imageDataUrl: `data:image/jpeg;base64,${image.toJPEG(76).toString('base64')}`,
     sourceName: demo.name,
     scene: demo.scene,
+    captureInfo: {
+      captureMode: 'demo',
+      sourceId: demo.id,
+      sourceName: demo.name,
+      displayId: cursorDisplay().id,
+      hiddenAssistant: { control: false, answer: false, agentOps: false, delayMs: 0 },
+    },
   };
 };
 
@@ -459,8 +478,18 @@ const getDesktopSources = async thumbnailSize => desktopCapturer.getSources({
   thumbnailSize,
 });
 
+const isAssistantCaptureSource = source => /以太|Aether|project-aether/i.test(String(source?.name || ''));
+
+const filterAssistantSources = sources => sources.filter(source => !isAssistantCaptureSource(source));
+
+const fallbackToCursorSource = (sources, display) => {
+  const candidate = findDisplaySource(sources, display.id);
+  return candidate && !isAssistantCaptureSource(candidate) ? candidate : undefined;
+};
+
 const captureSourceAttempt = async () => {
-  const sources = await getDesktopSources({ width: 1280, height: 720 });
+  const rawSources = await getDesktopSources({ width: 1280, height: 720 });
+  const sources = filterAssistantSources(rawSources);
   const display = cursorDisplay();
   return {
     sources,
@@ -496,11 +525,11 @@ const followCurrentScreen = async (options = {}) => {
   const sources = await getDesktopSources({ width: 1280, height: 720 });
   const display = cursorDisplay();
   const source = findDisplaySource(sources, display.id);
-  if (!source) throw new Error('没有找到可读取的显示器画面，请检查系统屏幕录制权限');
+  if (!source) throw new Error('没有找到可读取的显示器画面，请检查系统屏幕录制权限。');
   const nextSettings = saveSettings({
     selectedSourceId: source.id,
     selectedSourceName: source.name || `显示器 ${display.id}`,
-    selectedScene: 'unknown',
+    selectedScene: settings.selectedScene || 'unknown',
     captureMode: 'cursor-display',
     captureDisplayId: display.id,
   });
@@ -509,18 +538,24 @@ const followCurrentScreen = async (options = {}) => {
 
 const selectSource = source => {
   const id = String(source?.id || '');
-  if (!id) throw new Error('请选择有效的画面来源');
+  if (!id) throw new Error('请选择有效的画面来源。');
+  if (source.kind === 'demo' && !process.env.AETHER_UI_SMOKE_DIR) {
+    throw new Error('演示图片不能作为真实画面来源，请选择鼠标所在屏幕或具体窗口。');
+  }
+  if (isAssistantCaptureSource(source)) {
+    throw new Error('不能选择以太自己的窗口作为画面来源，请选择鼠标所在屏幕或游戏窗口。');
+  }
   const kind = source.kind === 'window' ? 'window' : source.kind === 'demo' ? 'demo' : 'screen';
   return saveSettings({
     selectedSourceId: id,
     selectedSourceName: String(source.name || '手动画面来源'),
-    selectedScene: source.scene || 'unknown',
+    selectedScene: source.scene || settings.selectedScene || 'unknown',
     captureMode: kind === 'window' ? 'manual-window' : kind === 'demo' ? 'demo' : 'manual-screen',
   });
 };
 
 const listSources = async () => {
-  const demos = DEMO_SCENES.map(demo => {
+  const demos = process.env.AETHER_UI_SMOKE_DIR ? DEMO_SCENES.map(demo => {
     const image = nativeImage.createFromPath(demoFile(demo.file)).resize({ width: 260 });
     return {
       id: demo.id,
@@ -529,9 +564,9 @@ const listSources = async () => {
       scene: demo.scene,
       thumbnail: `data:image/jpeg;base64,${image.toJPEG(55).toString('base64')}`,
     };
-  });
+  }) : [];
   try {
-    const sources = await getDesktopSources({ width: 260, height: 160 });
+    const sources = filterAssistantSources(await getDesktopSources({ width: 260, height: 160 }));
     return [
       ...demos,
       ...sources.map(source => ({
@@ -549,28 +584,55 @@ const listSources = async () => {
 };
 
 const captureSelectedSource = async () => {
-  const selectedId = settings.selectedSourceId || 'demo:gear';
+  const selectedId = settings.selectedSourceId || 'auto';
+  const requestedMode = settings.captureMode || 'cursor-display';
   if (settings.captureMode === 'demo' && selectedId.startsWith('demo:')) {
-    lastCaptureDisplayId = cursorDisplay().id;
-    return getDemoImage(selectedId);
+    if (!process.env.AETHER_UI_SMOKE_DIR) {
+      settings = saveSettings({
+        selectedSourceId: 'auto',
+        selectedSourceName: '鼠标所在屏幕',
+        selectedScene: settings.selectedScene || 'unknown',
+        captureMode: 'cursor-display',
+      });
+    } else {
+      lastCaptureDisplayId = cursorDisplay().id;
+      return getDemoImage(selectedId);
+    }
   }
 
   const visibility = await hideAssistantForCapture();
   try {
     let { sources, display, source } = await captureSourceAttempt();
-    if (!source) throw new Error('找不到当前画面来源，请在主界面重新选择显示器或窗口');
+    let fallbackReason = '';
+    if ((settings.captureMode === 'manual-screen' || settings.captureMode === 'manual-window') && source?.id !== selectedId) {
+      fallbackReason = 'selected-source-unavailable';
+    }
+    if (!source) throw new Error('找不到当前画面来源，请在主界面重新选择显示器或窗口。');
+    if (isAssistantCaptureSource(source)) {
+      const cursorSource = fallbackToCursorSource(sources, display);
+      if (!cursorSource) throw new Error('捕获来源仍是以太窗口。请切到游戏窗口，或使用“鼠标所在屏幕”。');
+      source = cursorSource;
+      fallbackReason = fallbackReason || 'assistant-source-filtered';
+    }
     let image = source.thumbnail.resize({ width: 1280 });
     if (source.thumbnail.isEmpty() || isLikelyBlankCapture(image)) {
       await delay(650);
       ({ sources, display, source } = await captureSourceAttempt());
-      if (!source) throw new Error('找不到当前画面来源，请在主界面重新选择显示器或窗口');
+      if (!source) throw new Error('找不到当前画面来源，请在主界面重新选择显示器或窗口。');
+      if (isAssistantCaptureSource(source)) {
+        const cursorSource = fallbackToCursorSource(sources, display);
+        if (!cursorSource) throw new Error('捕获来源仍是以太窗口。请切到游戏窗口，或使用“鼠标所在屏幕”。');
+        source = cursorSource;
+        fallbackReason = fallbackReason || 'assistant-source-filtered';
+      }
       image = source.thumbnail.resize({ width: 1280 });
     }
     if ((source.thumbnail.isEmpty() || isLikelyBlankCapture(image)) && settings.captureMode !== 'cursor-display') {
-      const cursorSource = findDisplaySource(sources, display.id);
+      const cursorSource = fallbackToCursorSource(sources, display);
       if (cursorSource) {
         source = cursorSource;
         image = source.thumbnail.resize({ width: 1280 });
+        fallbackReason = fallbackReason || 'manual-source-blank';
       }
     }
     if (source.thumbnail.isEmpty() || isLikelyBlankCapture(image)) {
@@ -578,14 +640,18 @@ const captureSelectedSource = async () => {
       if (fallback) {
         source = fallback;
         image = source.thumbnail.resize({ width: 1280 });
+        fallbackReason = fallbackReason || 'readable-screen-fallback';
       }
+    }
+    if (isAssistantCaptureSource(source)) {
+      throw new Error('捕获来源仍是以太窗口。请切到游戏窗口，或使用“鼠标所在屏幕”。');
     }
     lastCaptureDisplayId = source.display_id ? Number(source.display_id) : display.id;
     if (settings.captureMode === 'cursor-display' && (source.id !== settings.selectedSourceId || source.name !== settings.selectedSourceName)) {
       saveSettings({
         selectedSourceId: source.id,
         selectedSourceName: source.name || `显示器 ${display.id}`,
-        selectedScene: 'unknown',
+        selectedScene: settings.selectedScene || 'unknown',
         captureDisplayId: display.id,
       });
     }
@@ -596,6 +662,15 @@ const captureSelectedSource = async () => {
       imageDataUrl: `data:image/jpeg;base64,${image.toJPEG(72).toString('base64')}`,
       sourceName: source.name,
       scene: settings.selectedScene || 'unknown',
+      captureInfo: {
+        captureMode: requestedMode,
+        selectedSourceId: selectedId,
+        sourceId: source.id,
+        sourceName: source.name,
+        displayId: lastCaptureDisplayId,
+        hiddenAssistant: visibility,
+        fallbackReason,
+      },
     };
   } finally {
     restoreAssistantAfterCapture(visibility);
@@ -623,9 +698,9 @@ const currentConversation = () => currentConversationId
 const openConversation = input => {
   const conversationId = input?.conversationId || currentConversationId;
   const accountKey = input?.accountKey || currentAccountKey || activeAccountKey();
-  if (!conversationId) throw new Error('没有可打开的历史会话');
+  if (!conversationId) throw new Error('没有可打开的历史会话。');
   const conversation = runtime.getConversation(accountKey, conversationId);
-  if (!conversation) throw new Error('没有找到这条历史会话');
+  if (!conversation) throw new Error('娌℃湁鎵惧埌杩欐潯鍘嗗彶浼氳瘽');
   currentConversationId = conversation.id;
   currentAccountKey = conversation.accountKey || accountKey;
   const run = conversation.lastRunSnapshot || runtime.getRun(conversation.lastRunId);
@@ -640,8 +715,37 @@ const selectConversation = input => {
   return conversation;
 };
 
+const deleteConversation = input => {
+  const accountKey = input?.accountKey || currentAccountKey || activeAccountKey();
+  const conversationId = input?.conversationId;
+  const result = runtime.deleteConversation({
+    accountKey,
+    conversationId,
+    deleteLinkedRuns: input?.deleteLinkedRuns !== false,
+  });
+  if (result.deleted && currentConversationId === conversationId) {
+    currentConversationId = undefined;
+    currentAccountKey = activeAccountKey();
+  }
+  broadcast('conversation:deleted', result);
+  return result;
+};
+
+const clearConversations = input => {
+  const result = runtime.clearConversations({
+    accountKey: input?.accountKey || currentAccountKey || activeAccountKey(),
+    includeAll: Boolean(input?.includeAll),
+    deleteLinkedRuns: input?.deleteLinkedRuns !== false,
+    clearMemory: Boolean(input?.clearMemory),
+  });
+  currentConversationId = undefined;
+  currentAccountKey = activeAccountKey();
+  broadcast('conversation:cleared', result);
+  return result;
+};
+
 const runAgent = async input => {
-  if (assistantRunning) throw new Error('以太正在分析上一张画面，请稍候');
+  if (assistantRunning) throw new Error('以太正在分析上一张画面，请稍等。');
   assistantRunning = true;
   setAssistantStatus(input.includeVision === false ? 'analyzing' : 'capturing', input.includeVision === false ? '正在整理回答' : '正在捕获当前画面');
   try {
@@ -663,6 +767,7 @@ const runAgent = async input => {
       imageDataUrl: capture?.imageDataUrl,
       imageHash,
       sourceName: capture?.sourceName || '纯文本',
+      captureInfo: capture?.captureInfo,
     });
     if (run.conversationId) {
       currentConversationId = run.conversationId;
@@ -687,10 +792,11 @@ const runQuickScan = async () => {
   if (assistantRunning) return undefined;
   createAnswerWindow();
   try {
+    const selectedScene = settings.selectedScene && settings.selectedScene !== 'unknown' ? settings.selectedScene : 'unknown';
     const run = await runAgent({
-      query: '请看懂当前画面，告诉我最值得注意的可见信息，并给出两步以内的下一步建议。',
+      query: SCAN_PROMPTS[selectedScene] || DEFAULT_SCAN_PROMPT,
       persona: settings.persona,
-      scene: 'unknown',
+      scene: selectedScene,
       mode: 'scan',
       includeVision: true,
       analysisMode: 'deep',
@@ -750,22 +856,50 @@ const registerIpc = () => {
   ipcMain.handle('conversation:get', (_event, input) => runtime.getConversation(input?.accountKey || currentAccountKey || activeAccountKey(), input?.conversationId || currentConversationId));
   ipcMain.handle('conversation:select', (_event, input) => selectConversation(input || {}));
   ipcMain.handle('conversation:open', (_event, input) => openConversation(input || {}));
+  ipcMain.handle('conversation:delete', (_event, input) => deleteConversation(input || {}));
+  ipcMain.handle('conversation:clear', (_event, input) => clearConversations(input || {}));
   ipcMain.handle('conversation:new-from-scan', () => runQuickScan());
   ipcMain.handle('conversation:ask', async (_event, input) => {
     const latest = runtime.getLatestRun();
-    const conversationId = input?.conversationId || currentConversationId;
-    const accountKey = input?.accountKey || currentAccountKey || activeAccountKey();
-    if (!conversationId) throw new Error('当前没有可追问的会话，请先按 Alt+Q 解读一次画面');
+    const requestedAccountKey = input?.accountKey;
+    const requestedConversationId = typeof input?.conversationId === 'string' ? input.conversationId.trim() : '';
+    const requestedScene = input?.scene && input.scene !== 'unknown' ? input.scene : (latest?.scene || settings.selectedScene || 'unknown');
+    const preferredAccountKeys = [requestedAccountKey, currentAccountKey, activeAccountKey()];
+    const knownAccounts = knowledgeService?.listAccounts?.() || [];
+    const normalized = [...new Set([
+      ...preferredAccountKeys,
+      ...knownAccounts.map(item => `${item.game}:${item.uid}`),
+      'local:default',
+    ])];
+    let conversation;
+    let resolvedAccountKey;
+    if (!requestedConversationId) {
+      throw new Error('当前没有可追问的会话，请先按 Alt+Q 解读一次画面后再追问。');
+    }
+    const candidateAccountKeys = normalized.filter(Boolean);
+    for (const key of candidateAccountKeys) {
+      const normalizedKey = String(key).trim();
+      const found = runtime.getConversation(normalizedKey, requestedConversationId);
+      if (found) {
+        conversation = found;
+        resolvedAccountKey = normalizedKey;
+        break;
+      }
+    }
+    if (!conversation) {
+      throw new Error(`找不到目标会话（ID=${requestedConversationId}）。请先打开对应会话或重新扫码后再试。`);
+    }
+    const finalAccountKey = resolvedAccountKey || conversation.accountKey || requestedAccountKey || latest?.accountKey || currentAccountKey || 'local:default';
     return runAgent({
       query: String(input?.query || '').slice(0, 4000),
       persona: input?.persona || settings.persona,
-      scene: input?.scene || latest?.scene || settings.selectedScene || 'unknown',
+      scene: requestedScene || conversation.scene || latest?.scene || 'unknown',
       mode: 'chat',
       includeVision: false,
       analysisMode: input?.analysisMode || 'deep',
-      conversationId,
-      accountKey,
-      parentRunId: input?.parentRunId || latest?.id,
+      conversationId: conversation.id,
+      accountKey: finalAccountKey,
+      parentRunId: input?.parentRunId || conversation.lastRunId || latest?.id,
       reuseLastObservation: true,
     });
   });
@@ -855,6 +989,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     settings.selectedSourceName = '鼠标所在屏幕';
     settings.selectedScene = 'unknown';
   }
+  if (settings.captureMode === 'demo' || String(settings.selectedSourceId || '').startsWith('demo:')) {
+    settings.captureMode = 'cursor-display';
+    settings.selectedSourceId = 'auto';
+    settings.selectedSourceName = '鼠标所在屏幕';
+    settings.selectedScene = 'unknown';
+  }
   settings.experienceVersion = SETTINGS_VERSION;
   delete settings.patrolEnabled;
   delete settings.screenWatchEnabled;
@@ -888,6 +1028,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     token: modelConfig.token,
     model: modelConfig.model || MODEL_ID,
     fastVisionModel: modelConfig.fastVisionModel || modelConfig.model || MODEL_ID,
+    visionPipeline: modelConfig.visionPipeline || 'auto',
     apiBaseUrl: modelConfig.apiBaseUrl,
     apiUrl: modelConfig.apiUrl,
     apiWire: modelConfig.apiWire,
@@ -903,15 +1044,15 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   registerIpc();
   createTray();
   showControlWindow();
-  const scanShortcutReady = globalShortcut.register('Alt+Q', () => void runQuickScan());
-  const latestShortcutReady = globalShortcut.register('Alt+Shift+Q', () => showLatestAnswer());
+  const scanShortcutReady = globalShortcut.register("Alt+Q", () => void runQuickScan());
+  const latestShortcutReady = globalShortcut.register("Alt+Shift+Q", () => showLatestAnswer());
   const shortcutsReady = scanShortcutReady && latestShortcutReady;
   settings = saveSettings({ shortcutReady: shortcutsReady });
-  setAssistantStatus('idle', shortcutsReady ? '按 Alt+Q 让我看看' : '热键冲突 可点按钮', {
+  setAssistantStatus("idle", shortcutsReady ? "等待中" : "热键冲突，可点按钮", {
     shortcutReady: shortcutsReady,
   });
-  screen.on('display-removed', positionAnswerWindow);
-  screen.on('display-metrics-changed', positionAnswerWindow);
+  screen.on("display-removed", positionAnswerWindow);
+  screen.on("display-metrics-changed", positionAnswerWindow);
   setInterval(() => runtime.reloadKnowledge(), 60000);
   if (process.env.AETHER_UI_SMOKE_DIR) {
     void runUiSmoke(path.resolve(process.env.AETHER_UI_SMOKE_DIR)).catch(error => {
@@ -925,21 +1066,21 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   app.exit(1);
 });
 
-app.on('second-instance', () => {
+app.on("second-instance", () => {
   showControlWindow();
 });
 
-app.on('activate', () => {
+app.on("activate", () => {
   showControlWindow();
 });
 
-app.on('before-quit', () => {
+app.on("before-quit", () => {
   quitting = true;
   clearTimeout(answerHideTimer);
   knowledgeService?.close();
   globalShortcut.unregisterAll();
 });
 
-app.on('window-all-closed', () => {
-  // 关闭主界面后继续驻留系统托盘。
+app.on("window-all-closed", () => {
+  // Keep the tray process alive after the main window is closed.
 });

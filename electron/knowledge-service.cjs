@@ -1,4 +1,4 @@
-const crypto = require('node:crypto');
+﻿const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
@@ -25,18 +25,10 @@ const GAME_ALIASES = {
 };
 
 const QUERY_HINTS = [
-  '洛恩', '玛薇卡', '千冶·刃', '千冶', '二相乐园', '观览云岛站', '勇锐魁杰试炼战记',
-  '黑曜秘典', '风起之日', '灾悔', '焚曜千阳', '无量忿怒', '拾骨地', '名冶',
-  '毕业', '毕业面板', '面板参考', '配队', '阵容推荐', '队伍', '光锥', '遗器', '圣遗物',
-  '主词条', '副词条', '宝箱', '尘灵', '格挡', '限时活动', '活动攻略', 'topic_id',
-  '双爆', '暴击率', '暴击伤害', '圣遗物', '遗器', '装备', '词条', '配队', '阵容', '循环',
-  '基尼奇', '撼地者', '深境螺旋', '上半', '下半', '破盾', '生存位',
-  '菈乌玛', '拉乌玛', 'Lauma', '月绽放', '妮露', '纳西妲', '元素精通', '毕业面板',
-  '剧情', '防剧透', 'NPC', '人物关系', '探索', '地图', '路线', '解谜', '卡点',
-  '主词条', '副词条', '冒险等阶', '世界等级', '魔神任务', '传说任务', '世界任务', '委托任务', '宝箱', '成就', '地图工具', '地灵龛',
-  '光锥', '命途', '叠影', '遗器', '位面饰品', '开拓等级', '均衡等级', '开拓任务', '开拓续闻', '同行任务', '冒险任务',
-  '模拟宇宙', '祝福', '奇物', '忘却之庭', '混沌回忆', '虚构叙事', '末日幻影', '战利品',
-  '自动点击', '自动操作', '游戏内存', '读取内存', '抓包', '封包', '截图', 'OCR', '视觉',
+  '配队', '阵容', '装备', '角色', '卡点', '探索', '路线', '宝箱', '机制', '副本', '攻略',
+  '技能', '面板', '养成', '圣遗物', '遗器', '队伍', '任务', '剧情', '活动', '更新', '版本',
+  '光锥', '技能循环', '景深', '世界等级', '地图', '防御', '伤害', '玩法', '探索',
+  'topic_id', 'topicDetail', 'NPC', 'OCR', '截图', 'visual',
 ];
 
 const TRUSTED_GUIDE_DOMAINS = [
@@ -44,6 +36,7 @@ const TRUSTED_GUIDE_DOMAINS = [
   'hsr.keqingmains.com',
   'prydwen.gg',
   'gamersky.com',
+  'biligame.com',
   'miyoushe.com',
   'bbs.mihoyo.com',
   'baike.mihoyo.com',
@@ -62,6 +55,7 @@ const PREFERRED_GUIDE_DOMAINS = {
     'baike.mihoyo.com',
     'hoyolab.com',
     'gamersky.com',
+    'biligame.com',
     '17173.com',
     'game8.co',
   ],
@@ -69,6 +63,7 @@ const PREFERRED_GUIDE_DOMAINS = {
     'prydwen.gg',
     'hsr.keqingmains.com',
     'keqingmains.com',
+    'biligame.com',
     'miyoushe.com',
     'bbs.mihoyo.com',
     'hoyolab.com',
@@ -100,6 +95,71 @@ const BLOCKED_SOURCE_PATTERNS = [
 ];
 
 const GUIDE_KEYWORDS = ['配队', '养成', '毕业面板', '面板', '攻略', 'build', 'team', 'guide', 'teams', 'stats'];
+const LOCAL_HIT_SCORE_GATE = 9;
+const LOCAL_HIT_ACCEPT_SCORE = 5;
+const LOCAL_HIT_MIN_COUNT = 2;
+const LOCAL_EXACT_QA_SCORE_GATE = 22;
+const WEB_TRIGGER_REGEX = /(search|latest|update|announcement|patch|version|build|release|上新|最新|更新|版本|攻略|查一下|看看|搜一下|官方|公告|机制|打法|机械|首领|BOSS|Boss|boss|技能|技能点|配队|队伍|天赋|旋转|循环|输出|伤害|攻略)/i;
+const WEB_SEARCH_INTENT_REGEX = /(我想|我需要|请帮|帮我|帮我找|帮我查|想知道|怎么打|如何打|机制|打法|配队|队伍|输出|伤害|首领|b站|youtube|视频|wiki|攻略|给我查|查一查|搜一搜|观测枢|米游社|攻略入口|版本变化|最新|更新|资讯)/i;
+const GUIDE_INTENT_PATTERNS = [
+  ['version_update', /最新|更新|版本|改动|公告|资讯|上线|复刻|patch|version|update/i],
+  ['event', /活动|限时|奖励|原石|试炼|挑战|玩法|event/i],
+  ['mechanic', /机制|打法|怎么打|如何打|boss|BOSS|首领|怪物|敌人|抗性|弱点|破盾|锁血|免伤|虚弱|瘫痪|技能|mechanic/i],
+  ['abyss/endgame', /深渊|螺旋|第\d+层|混沌|忘却之庭|虚构叙事|末日幻影|末日|剧诗|幻想真境|endgame/i],
+  ['team', /配队|阵容|队伍|组队|循环|轴|出伤|team|composition|rotation/i],
+  ['build', /装备|武器|圣遗物|遗器|光锥|词条|面板|毕业|养成|天赋|命座|星魂|技能点|build|stats/i],
+  ['exploration', /探索|解谜|宝箱|路线|地图|传送点|锚点|神瞳|战利品|怎么上去|怎么进去|开门|机关|puzzle|map/i],
+  ['achievement', /成就|隐藏成就|奖杯|achievement/i],
+  ['story_recap', /剧情回顾|剧情讲到|讲到哪|前情|回顾|人物关系|防剧透|story recap/i],
+  ['quest', /任务|委托|世界任务|魔神任务|传说任务|开拓任务|同行任务|冒险任务|quest/i],
+  ['general_guide', /攻略|怎么|如何|要不要|能不能|卡点|不会|求解|推荐|guide/i],
+];
+const SEARCH_FALLBACK_SITES = {
+  genshin: [
+    { name: '米游社', url: 'https://www.miyoushe.com/ys/obc/?bbs_presentation_style=no_header&visit_device=pc', key: 'miyoushe-ys-obc' },
+    { name: '米游社', url: 'https://www.miyoushe.com/ys/strategy/?bbs_presentation_style=no_header&hide_nav=true', key: 'miyoushe-ys-strategy' },
+    { name: '米哈游百科', url: 'https://baike.mihoyo.com/ys/obc/?bbs_presentation_style=no_header&visit_device=pc', key: 'mihoyo-ys-bb' },
+    { name: '米哈游百科', url: 'https://baike.mihoyo.com/ys/strategy/?bbs_presentation_style=no_header&hide_nav=true', key: 'mihoyo-ys-strategy' },
+    { name: '米游社攻略', url: 'https://wiki.biligame.com/ys', key: 'biligame-ys' },
+  ],
+  starrail: [
+    { name: '米游社', url: 'https://www.miyoushe.com/sr/home/61?type=2', key: 'miyoushe-sr-home' },
+    { name: '米游社', url: 'https://www.miyoushe.com/sr/home/61?type=hot', key: 'miyoushe-sr-hot' },
+    { name: '米游社', url: 'https://www.miyoushe.com/sr/topicDetail/44', key: 'miyoushe-sr-topic' },
+    { name: 'Prydwen', url: 'https://www.prydwen.gg/star-rail/', key: 'prydwen-sr' },
+    { name: 'HSR-KeQing', url: 'https://hsr.keqingmains.com', key: 'hsr-kqm' },
+    { name: '米哈游百科', url: 'https://baike.mihoyo.com/', key: 'mihoyo-bb' },
+  ],
+  common: [
+    { name: '米哈游百科', url: 'https://baike.mihoyo.com/', key: 'mihoyo-bb-common' },
+    { name: '米游社', url: 'https://www.miyoushe.com/', key: 'miyoushe-common' },
+  ],
+};
+const classifyWebNeed = query => {
+  const text = String(query || '');
+  if (!text.trim()) return { required: false, reason: '' };
+  if (!WEB_TRIGGER_REGEX.test(text) && !WEB_SEARCH_INTENT_REGEX.test(text)) return { required: false, reason: '' };
+  return { required: true, reason: '用户明确要求联网检索或版本类内容' };
+};
+
+const buildSearchFallback = (query, game, scene = 'unknown') => {
+  const clean = compactText(query, 80).replace(/[^\u4e00-\u9fffA-Za-z0-9\\-·/.\\s]/g, ' ').trim();
+  const terms = [clean, `${clean} 攻略`, `${clean} 机制`, `${clean} 机制 攻略`].filter(item => item.trim());
+  const primary = SEARCH_FALLBACK_SITES[game] || SEARCH_FALLBACK_SITES.common;
+  const secondary = (scene === 'roster' || /配队|队伍|机制|打法/.test(query))
+    ? [
+        ...SEARCH_FALLBACK_SITES.genshin,
+        ...SEARCH_FALLBACK_SITES.starrail,
+      ]
+    : [];
+  const merged = [...primary, ...secondary].filter((item, index, all) => index === all.findIndex(other => other.url === item.url));
+  return {
+    gameHint: game || '通用',
+    queryHints: [...new Set(terms)],
+    siteHints: merged.slice(0, 6).map(item => item.url),
+  };
+};
+
 const SCENE_KEYWORDS = {
   team: ['配队', '阵容', '阵容推荐', '队伍', '循环', 'topic_id', 'topicDetail', 'team', 'teams', 'composition'],
   event: ['活动', '限时活动', '活动攻略', '奖励', '原石', '格挡', '挑战', '试炼', '勇锐魁杰试炼战记'],
@@ -120,9 +180,11 @@ const characterAliases = value => {
   return [name];
 };
 
+const { loadKnowledgeFile } = require('./knowledge-pack.cjs');
+
 const inferGame = text => {
   const value = String(text || '');
-  if (/星穹铁道|星铁|star\s*rail|hsr/i.test(value)) return 'starrail';
+  if (/崩坏铁道|崩壞鐵道|崩壞|星穹铁道|星穹鐵道|星穹|星铁|星鐵|star\s*rail|hsr|honkai|第三次元|混沌药箱|混沌藥箱|幻造生物/i.test(value)) return 'starrail';
   if (/原神|genshin/i.test(value)) return 'genshin';
   return undefined;
 };
@@ -150,6 +212,34 @@ const domainOf = value => {
   }
 };
 
+const normalizeUrl = value => String(value || '').trim().replace(/[)\]}>，。！？；、]+$/g, '');
+
+const extractUrls = value => (String(value || '').match(/https?:\/\/[^\s"'<>]+/g) || [])
+  .map(normalizeUrl)
+  .filter((url, index, all) => url && all.indexOf(url) === index);
+
+const gameFromUrl = value => {
+  try {
+    const url = new URL(value);
+    const domain = url.hostname.replace(/^www\./, '');
+    const pathname = decodeURIComponent(url.pathname || '');
+    if (domain.endsWith('biligame.com')) {
+      if (/\/ys(?:\/|$)/i.test(pathname)) return 'genshin';
+      if (/\/sr(?:\/|$)/i.test(pathname)) return 'starrail';
+    }
+    if (domain === 'baike.mihoyo.com') {
+      if (/\/ys(?:\/|$)/i.test(pathname) || /[?&](game|entry_page)=ys\b/i.test(url.search)) return 'genshin';
+      if (/\/sr(?:\/|$)/i.test(pathname) || /[?&](game|entry_page)=sr\b/i.test(url.search)) return 'starrail';
+    }
+    if (domain === 'prydwen.gg' && /star-rail/i.test(pathname)) return 'starrail';
+    if (domain === 'hsr.keqingmains.com') return 'starrail';
+    if (domain === 'keqingmains.com') return 'genshin';
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const gameKeyFromLabel = value => {
   const text = String(value || '').toLowerCase();
   if (/starrail|星穹铁道|星铁|honkai/.test(text)) return 'starrail';
@@ -158,6 +248,14 @@ const gameKeyFromLabel = value => {
 };
 
 const domainMatches = (domain, list = []) => list.some(item => domain === item || domain.endsWith(`.${item}`));
+
+const isTrustedGuideUrl = (url, game) => {
+  const domain = domainOf(url);
+  if (!domain) return false;
+  const urlGame = gameFromUrl(url);
+  if (game && urlGame && game !== urlGame) return false;
+  return domainMatches(domain, TRUSTED_GUIDE_DOMAINS);
+};
 
 const includesAny = (text, words = []) => words.some(word => {
   const value = String(word || '').trim();
@@ -175,6 +273,63 @@ const isLowQualityFallbackSource = value => {
 const sourceTierWeight = value => SOURCE_TIER_WEIGHT[value] || 0;
 
 const guideKeywordsFor = scene => [...GUIDE_KEYWORDS, ...(SCENE_KEYWORDS[scene] || [])];
+
+const classifyGuideIntent = (query, scene = 'unknown', context = {}) => {
+  const text = [
+    query,
+    scene,
+    context.selectedCharacter,
+    ...(Array.isArray(context.visibleRoster) ? context.visibleRoster : []),
+    context.summary,
+    ...(Array.isArray(context.facts) ? context.facts : []),
+    ...(Array.isArray(context.ocrText) ? context.ocrText : []),
+  ].filter(Boolean).join(' ');
+  if (!text.trim()) return '';
+  for (const [intent, pattern] of GUIDE_INTENT_PATTERNS) {
+    if (pattern.test(text)) return intent;
+  }
+  if (scene === 'gear') return 'build';
+  if (scene === 'roster' || scene === 'team') return 'team';
+  if (scene === 'explore') return 'exploration';
+  if (scene === 'story') return 'story_recap';
+  if (scene === 'event') return 'event';
+  if (classifyWebNeed(query).required) return 'general_guide';
+  return '';
+};
+
+const compactEntityKey = value => String(value || '')
+  .toLowerCase()
+  .replace(/[\s·・:：|丨/\\\-()[\]{}"'`~!@#$%^&*_+=,，。！？；;]+/g, '');
+
+const sceneIntentMatches = (scene, guideIntent) => {
+  if (!guideIntent) return true;
+  if (guideIntent === 'build') return scene === 'gear';
+  if (guideIntent === 'team') return scene === 'roster' || scene === 'team';
+  if (guideIntent === 'exploration') return scene === 'explore';
+  if (guideIntent === 'story_recap') return scene === 'story';
+  if (guideIntent === 'event') return scene === 'event';
+  if (guideIntent === 'quest') return scene === 'story' || scene === 'explore';
+  return true;
+};
+
+const localExactQaMatch = (hit, searchQuery, game, guideIntent) => {
+  if (!hit || !guideIntent) return false;
+  const hitGame = gameKeyFromLabel(hit.game);
+  if (game && hitGame && hitGame !== game) return false;
+  if (!['curated', 'preferred'].includes(hit.sourceTier || '')) return false;
+  if (Number(hit.confidence || 0) < 0.92) return false;
+  if (Number(hit.score || 0) < LOCAL_EXACT_QA_SCORE_GATE) return false;
+  if (!sceneIntentMatches(hit.scene, guideIntent)) return false;
+  const rawQuery = compactEntityKey(searchQuery);
+  const tags = Array.isArray(hit.tags) ? hit.tags : [];
+  const entityTerms = [hit.character, hit.topic, hit.title, ...tags]
+    .map(compactEntityKey)
+    .filter(term => term.length >= 2 && term.length <= 48);
+  const exactEntity = entityTerms.some(term => rawQuery.includes(term) || term.includes(rawQuery));
+  if (!exactEntity) return false;
+  const qaLikeText = `${hit.title || ''} ${hit.content || ''} ${tags.join(' ')}`;
+  return /qa|q&a|问答|精确|攻略|机制|打法|配队|养成|路线|任务|活动|成就|毕业/i.test(qaLikeText);
+};
 
 const makeGuideCardContent = (raw, context = {}) => {
   const text = compactText(raw, 2400);
@@ -731,6 +886,13 @@ class AetherKnowledgeService {
 
   searchLocal(query, game, scene, limit = 5) {
     const gameLabel = GAME_LABELS[game] || game || null;
+    const gameAlias = game === 'genshin' || game === 'starrail' ? game : gameKeyFromLabel(game);
+    const matchGames = [gameLabel, gameAlias].filter((item, index, all) => item && all.indexOf(item) === index);
+    const normalizedMatchGames = matchGames.length ? matchGames : [];
+    const hasGameFilter = matchGames.length > 0;
+    const gameMatchClause = hasGameFilter
+      ? `(${matchGames.map(() => 'k.game = ?').join(' OR ') } OR k.game = '通用')`
+      : "k.game = '通用'";
     const rawQuery = `${query} ${scene || ''}`.toLowerCase();
     const directTerms = rawQuery.split(/[\s，。！？、；：/|]+/)
       .filter(term => term.length > 1)
@@ -782,6 +944,8 @@ class AetherKnowledgeService {
       topic: row.topic || undefined,
       character: row.character || undefined,
       scene: row.scene || undefined,
+      confidence: Number(row.confidence || 0),
+      tags: parseJson(row.tags_json || '[]', []),
       semanticScore: Number(row.semantic_score || 0),
       embeddingScore: Number(row.embedding_score || 0),
     });
@@ -789,7 +953,7 @@ class AetherKnowledgeService {
       const matchQuery = this.ftsQuery(query, scene);
       if (matchQuery) {
         try {
-          const rows = this.db.prepare(`
+          const baseQuery = `
             SELECT k.*, s.url AS source_url, s.title AS source_title, s.author, s.kind AS source_type,
               COALESCE(s.source_tier, k.source_tier, 'local') AS source_tier,
               bm25(knowledge_cards_fts) AS bm25_score
@@ -797,19 +961,22 @@ class AetherKnowledgeService {
             JOIN knowledge_cards k ON k.id = knowledge_cards_fts.id
             LEFT JOIN sources s ON s.id = k.source_id
             WHERE knowledge_cards_fts MATCH ?
-              AND (? IS NULL OR k.game = ? OR k.game = '通用')
+              ${hasGameFilter ? `AND (${gameMatchClause})` : ''}
             ORDER BY bm25_score ASC
             LIMIT ?
-          `).all(matchQuery, gameLabel, gameLabel, limit);
-          if (rows.length) {
-            return rows
-              .map(row => toHit(row, Math.max(1, 12 - Number(row.bm25_score || 0)) + scoreRow(row)))
-              .sort((a, b) => b.score - a.score);
-          }
-        } catch {
-          this.ftsReady = false;
+          `;
+          const rows = hasGameFilter
+            ? this.db.prepare(baseQuery).all(matchQuery, ...normalizedMatchGames, limit)
+            : this.db.prepare(baseQuery).all(matchQuery, limit);
+        if (rows.length) {
+          return rows
+            .map(row => toHit(row, Math.max(1, 12 - Number(row.bm25_score || 0)) + scoreRow(row)))
+            .sort((a, b) => b.score - a.score);
         }
+      } catch {
+        this.ftsReady = false;
       }
+    }
     }
     const sceneTerms = {
       team: '配队 阵容 队伍 循环 阵容推荐 topic_id topicDetail',
@@ -824,9 +991,9 @@ class AetherKnowledgeService {
       SELECT k.*, s.url AS source_url, s.title AS source_title, s.author, s.kind AS source_type,
         COALESCE(s.source_tier, k.source_tier, 'local') AS source_tier
       FROM knowledge_cards k LEFT JOIN sources s ON s.id = k.source_id
-      WHERE (? IS NULL OR k.game = ? OR k.game = '通用')
-    `).all(gameLabel, gameLabel);
-    return rows.map(row => {
+      WHERE ${gameMatchClause}
+    `).all(...(hasGameFilter ? normalizedMatchGames : []));
+    return rows.slice(0, limit).map(row => {
       const haystack = `${row.game} ${row.title} ${row.content} ${row.tags_json}`.toLowerCase();
       const directScore = directTerms.reduce((sum, term) => sum + (haystack.includes(term) ? 2 : 0), 0)
         + (raw.includes(String(row.title).toLowerCase()) ? 5 : 0);
@@ -871,13 +1038,52 @@ class AetherKnowledgeService {
   guideQueries(query, game, scene, context = {}) {
     const selected = normalizeCharacterName(context.selectedCharacter || '');
     const aliases = characterAliases(selected);
+    const guideIntent = context.guideIntent || classifyGuideIntent(query, scene, context);
+    const gameLabel = GAME_LABELS[game] || '';
+    const entityText = [
+      selected,
+      ...(Array.isArray(context.visibleRoster) ? context.visibleRoster.slice(0, 4) : []),
+      compactText(context.summary || '', 80),
+      ...(Array.isArray(context.facts) ? context.facts.slice(0, 2) : []),
+      query,
+    ].filter(Boolean).join(' ');
+    const wikiPath = game === 'genshin' ? 'wiki.biligame.com/ys' : game === 'starrail' ? 'wiki.biligame.com/sr' : 'wiki.biligame.com';
     const base = [
-      `${GAME_LABELS[game] || ''} ${query}`.trim(),
+      `${gameLabel} ${query}`.trim(),
       englishQuery(query, game, scene),
+      `${gameLabel} ${entityText} 攻略`.trim(),
+      `site:${wikiPath} ${gameLabel} ${entityText}`.trim(),
+      `site:miyoushe.com ${gameLabel} ${entityText}`.trim(),
     ];
-    if (aliases.length && (scene === 'gear' || scene === 'roster' || /配队|阵容|养成|面板|毕业|build|team/i.test(query))) {
+    if (
+      aliases.length
+      && (scene === 'gear'
+      || scene === 'roster'
+      || /配队|阵容|养成|面板|毕业|build|team/i.test(query))
+    ) {
       base.push(`原神 ${aliases[0]} 配队 养成 毕业面板`);
       base.push(`${aliases.find(item => /^[A-Za-z]/.test(item)) || aliases[0]} build teams KQM`);
+    }
+    if (/机制|打法|boss|首领|技能|输出|伤害|旋转|循环|如何打|怎么打|mechanic|rotation|bosses/i.test(query)) {
+      base.push(`${gameLabel} ${query} 机制 攻略`);
+      base.push(`${englishQuery(query, game, scene)} boss guide`);
+    }
+    const intentSuffix = {
+      build: '装备 养成 毕业 面板 词条',
+      team: '配队 阵容 循环 队伍',
+      mechanic: '机制 打法 抗性 弱点 破盾',
+      quest: '任务 流程 攻略',
+      event: '活动 攻略 奖励',
+      exploration: '探索 路线 解谜 宝箱',
+      achievement: '成就 隐藏成就 攻略',
+      story_recap: '剧情 回顾 防剧透',
+      version_update: '最新 版本 更新 攻略',
+      'abyss/endgame': '深渊 螺旋 终局 阵容 敌人',
+      general_guide: '攻略 指南',
+    }[guideIntent];
+    if (intentSuffix) {
+      base.push(`${gameLabel} ${entityText} ${intentSuffix}`.trim());
+      base.push(`site:${wikiPath} ${entityText} ${intentSuffix}`.trim());
     }
     return [...new Set(base.filter(Boolean))];
   }
@@ -886,9 +1092,11 @@ class AetherKnowledgeService {
     const url = result.url || '';
     const domain = domainOf(url);
     const text = `${result.title || ''} ${result.raw_content || ''} ${url}`;
-    const game = context.game || inferGame(text);
+    const urlGame = gameFromUrl(url);
+    const game = context.game || urlGame || inferGame(text);
     const gameAliases = GAME_ALIASES[game] || [];
     const preferredDomains = PREFERRED_GUIDE_DOMAINS[game] || TRUSTED_GUIDE_DOMAINS;
+    const trustedGamePath = Boolean(urlGame && (!context.game || context.game === urlGame));
     if (/search\.bilibili\.com|\/search[/?#]/i.test(url)) {
       return { accepted: false, reason: '搜索结果页不进入知识库' };
     }
@@ -897,16 +1105,22 @@ class AetherKnowledgeService {
     }
     const isPreferred = domainMatches(domain, preferredDomains);
     const isTrusted = domainMatches(domain, TRUSTED_GUIDE_DOMAINS);
+    if (context.game && urlGame && context.game !== urlGame) {
+      return { accepted: false, reason: '来源路径对应的游戏与当前游戏不一致' };
+    }
+    if (options.phase === 'candidate' && (isPreferred || trustedGamePath || (options.allowFallback && isTrusted))) {
+      return { accepted: true, reason: '', sourceTier: isPreferred || trustedGamePath ? 'preferred' : 'fallback' };
+    }
     if (!isPreferred && options.allowFallback && isLowQualityFallbackSource(url)) {
       return { accepted: false, reason: '低质量社区或视频来源不进入兜底知识库' };
     }
     if (!isPreferred && !options.allowFallback) {
       return { accepted: false, reason: '非精选攻略来源' };
     }
-    if (!isPreferred && options.allowFallback && !isTrusted && !includesAny(text, gameAliases)) {
+    if (!isPreferred && options.allowFallback && !isTrusted && !trustedGamePath && !includesAny(text, gameAliases)) {
       return { accepted: false, reason: '全网兜底未同时命中游戏名' };
     }
-    if (!isPreferred && gameAliases.length && !includesAny(text, gameAliases)) {
+    if (!isPreferred && gameAliases.length && !trustedGamePath && !includesAny(text, gameAliases)) {
       return { accepted: false, reason: '页面未命中当前游戏' };
     }
     const aliases = characterAliases(context.selectedCharacter);
@@ -914,7 +1128,7 @@ class AetherKnowledgeService {
       return { accepted: false, reason: '页面未命中当前角色' };
     }
     const sceneKeywords = guideKeywordsFor(context.scene);
-    if ((context.scene === 'gear' || context.scene === 'roster') && !includesAny(text, sceneKeywords)) {
+    if ((context.scene === 'gear' || context.scene === 'roster') && !trustedGamePath && !includesAny(text, sceneKeywords)) {
       return { accepted: false, reason: '页面不是养成或配队攻略' };
     }
     return { accepted: true, reason: '', sourceTier: isPreferred ? 'preferred' : 'fallback' };
@@ -937,7 +1151,7 @@ class AetherKnowledgeService {
     const url = result.url;
     const sourceId = crypto.createHash('sha1').update(url).digest('hex');
     const title = compactText(result.title || searchTitle || domainOf(url), 100);
-    const gameKey = game || context.game || inferGame(`${title} ${result.raw_content}`) || '';
+    const gameKey = game || context.game || gameFromUrl(url) || inferGame(`${title} ${result.raw_content}`) || '';
     const sourceTier = result.sourceTier || 'fallback';
     const content = makeGuideCardContent(result.raw_content, { ...context, game: gameKey });
     const sourceType = /reddit|bilibili|hoyolab/i.test(url) ? 'community' : 'web';
@@ -1000,14 +1214,17 @@ class AetherKnowledgeService {
     };
   }
 
-  async searchWeb(query, game, scene, context = {}) {
+  async searchWeb(query, game, scene, context = {}, options = {}) {
     const key = this.cacheKey(query, game, scene, context);
-    const cached = this.getSearchCache(key);
+    const bypassCache = options?.bypassCache;
+    const cached = bypassCache ? undefined : this.getSearchCache(key);
     if (cached) return { ...cached.payload, tavilyRequestIds: cached.requestIds, fromCache: true };
     const queries = this.guideQueries(query, game, scene, context);
+    const directUrls = extractUrls(query).filter(url => isTrustedGuideUrl(url, game));
     const requestIds = [];
     const runSearch = async allowFallback => {
-      const searchPayloads = await Promise.all(queries.map(value => this.tavily('search', {
+      const searchQueries = queries.slice(0, allowFallback ? 5 : 4);
+      const searchPayloads = await Promise.all(searchQueries.map(value => this.tavily('search', {
         query: value,
         search_depth: 'basic',
         max_results: 5,
@@ -1021,7 +1238,7 @@ class AetherKnowledgeService {
           if (!candidates.some(item => item.url === result.url)) candidates.push(result);
         }
       }
-      const candidateChecks = candidates.map(item => ({ item, relevance: this.sourceRelevance(item, { ...context, game, scene }, { allowFallback }) }));
+      const candidateChecks = candidates.map(item => ({ item, relevance: this.sourceRelevance(item, { ...context, game, scene }, { allowFallback, phase: 'candidate' }) }));
       return {
         selected: candidateChecks
           .filter(({ relevance }) => relevance.accepted)
@@ -1032,19 +1249,37 @@ class AetherKnowledgeService {
           .map(({ item, relevance }) => ({ url: item.url || '', title: compactText(item.title, 100), reason: relevance.reason })),
       };
     };
-    const preferred = await runSearch(false);
-    let selected = preferred.selected;
-    const searchFilteredSources = [...preferred.filtered];
-    if (selected.length < 2) {
-      const fallback = await runSearch(true);
-      searchFilteredSources.push(...fallback.filtered);
-      selected = [
-        ...selected,
-        ...fallback.selected.filter(item => !selected.some(existing => existing.url === item.url)),
-      ].slice(0, 5);
+    let selected = directUrls.map(url => ({
+      title: domainOf(url),
+      url,
+      sourceTier: domainMatches(domainOf(url), PREFERRED_GUIDE_DOMAINS[game] || []) || gameFromUrl(url) ? 'preferred' : 'fallback',
+    }));
+    const searchFilteredSources = [];
+    if (!selected.length) {
+      const preferred = await runSearch(false);
+      selected = preferred.selected;
+      searchFilteredSources.push(...preferred.filtered);
+      if (selected.length < 2) {
+        const fallback = await runSearch(true);
+        searchFilteredSources.push(...fallback.filtered);
+        selected = [
+          ...selected,
+          ...fallback.selected.filter(item => !selected.some(existing => existing.url === item.url)),
+        ].slice(0, 5);
+      }
     }
     const uniqueRequestIds = [...new Set(requestIds)];
-    if (!selected.length) return { hits: [], citations: [], filteredSources: searchFilteredSources, tavilyRequestIds: requestIds, fromCache: false };
+    if (!selected.length) {
+      return {
+        hits: [],
+        citations: [],
+        filteredSources: searchFilteredSources,
+        tavilyRequestIds: requestIds,
+        fromCache: false,
+        webQueries: queries,
+        extractedUrls: [],
+      };
+    }
     const extraction = await this.tavily('extract', {
       urls: selected.map(item => item.url),
       query,
@@ -1058,9 +1293,10 @@ class AetherKnowledgeService {
     const contentHashes = new Set();
     for (const extracted of extraction.results || []) {
       const search = selected.find(item => item.url === extracted.url) || {};
-      const evaluated = this.evaluateExtract({ ...extracted, title: search.title }, { ...context, game, scene }, { allowFallback: search.sourceTier === 'fallback' });
+      const selectedTitle = search.title && search.title !== domainOf(extracted.url) ? search.title : extracted.title || search.title;
+      const evaluated = this.evaluateExtract({ ...extracted, title: selectedTitle }, { ...context, game, scene }, { allowFallback: search.sourceTier === 'fallback' });
       if (!evaluated.accepted) {
-        filteredSources.push({ url: extracted.url, title: compactText(search.title, 100), reason: evaluated.reason });
+        filteredSources.push({ url: extracted.url, title: compactText(selectedTitle, 100), reason: evaluated.reason });
         continue;
       }
       const contentHash = crypto.createHash('sha1').update(compactText(extracted.raw_content, 900)).digest('hex');
@@ -1069,7 +1305,7 @@ class AetherKnowledgeService {
         continue;
       }
       contentHashes.add(contentHash);
-      hits.push(this.saveWebCard(game, { ...extracted, title: search.title, sourceTier: evaluated.sourceTier || search.sourceTier }, search.title, { ...context, game, scene }));
+      hits.push(this.saveWebCard(game, { ...extracted, title: selectedTitle, sourceTier: evaluated.sourceTier || search.sourceTier }, selectedTitle, { ...context, game, scene }));
     }
     for (const failed of extraction.failed_results || []) {
       filteredSources.push({ url: failed.url || '', title: '', reason: failed.error || '网页提取失败' });
@@ -1084,8 +1320,9 @@ class AetherKnowledgeService {
       sourceType: item.sourceType || 'web',
       sourceTier: item.sourceTier || 'fallback',
     }));
-    const payload = { hits, citations, filteredSources };
-    this.putSearchCache(key, payload, uniqueRequestIds);
+    const extractedUrls = selected.map(item => item.url);
+    const payload = { hits, citations, filteredSources, webQueries: queries, extractedUrls };
+    if (!bypassCache) this.putSearchCache(key, payload, uniqueRequestIds);
     return { ...payload, tavilyRequestIds: uniqueRequestIds, fromCache: false };
   }
 
@@ -1096,23 +1333,85 @@ class AetherKnowledgeService {
       selectedCharacter: normalizeCharacterName(input.selectedCharacter || ''),
       visibleRoster: Array.isArray(input.visibleRoster) ? input.visibleRoster.map(normalizeCharacterName).filter(Boolean) : [],
       activeTeamCandidates: Array.isArray(input.activeTeamCandidates) ? input.activeTeamCandidates.map(normalizeCharacterName).filter(Boolean) : [],
+      summary: compactText(input.summary || '', 260),
+      facts: Array.isArray(input.facts) ? input.facts : [],
+      ocrText: Array.isArray(input.ocrText) ? input.ocrText : [],
       scene: input.scene,
     };
+    const summarySignals = [
+      context.summary,
+      ...context.facts.slice(0, 3),
+      ...context.ocrText.slice(0, 4),
+    ].filter(Boolean).join(' ');
     const searchQuery = [
       input.query,
       context.selectedCharacter,
       ...context.visibleRoster.slice(0, 4),
-      input.scene === 'roster' || input.scene === 'gear' ? '配队 养成 毕业面板' : '',
+      summarySignals,
+      input.scene === 'roster' || input.scene === 'gear' ? '队伍 配队 build' : '',
     ].filter(Boolean).join(' ');
+    const guideIntent = input.guideIntent || classifyGuideIntent(searchQuery, input.scene, context);
+
     const localHits = this.searchLocal(searchQuery, game, input.scene, 5);
+    const localMatchCount = localHits.length;
+    const localTopScore = localHits[0]?.score || 0;
+    const hasHighLocalMatch = localMatchCount >= LOCAL_HIT_MIN_COUNT && localTopScore >= LOCAL_HIT_SCORE_GATE;
+    const strongLocalHits = localHits.filter(item => item.score >= LOCAL_HIT_ACCEPT_SCORE);
+    const exactLocal = localExactQaMatch(localHits[0], searchQuery, game, guideIntent);
     const accountContext = this.getAccountContext(game, context.visibleRoster);
-    const needsFreshWeb = input.allowWeb !== false
-      && Boolean(this.tavilyKey)
-      && (localHits.length < 2 || /当前|最新|版本|本期|今天|毕业面板|面板|配队攻略|养成攻略/.test(input.query || ''));
-    let web = { hits: [], citations: [], filteredSources: [], tavilyRequestIds: [], fromCache: false };
-    if (needsFreshWeb) web = await this.searchWeb(searchQuery, game, input.scene, context);
-    const hits = [...localHits, ...web.hits].slice(0, 8);
-    const localCitations = localHits.filter(item => item.sourceUrl).map(item => ({
+    const explicitWeb = classifyWebNeed(input.query);
+    const requireFreshWeb = explicitWeb.required;
+    const canSearchWeb = input.allowWeb !== false && Boolean(this.tavilyKey);
+    const needsFreshWeb = Boolean(canSearchWeb && guideIntent && !exactLocal && !hasHighLocalMatch);
+    const webSearchUnavailable = Boolean(guideIntent && !exactLocal && !canSearchWeb && input.allowWeb !== false);
+    let web = { hits: [], citations: [], filteredSources: [], tavilyRequestIds: [], fromCache: false, webQueries: [], extractedUrls: [] };
+    if (needsFreshWeb) {
+      const bypassCache = requireFreshWeb || ['mechanic', 'version_update', 'abyss/endgame'].includes(guideIntent);
+      web = await this.searchWeb(searchQuery, game, input.scene, { ...context, guideIntent }, { bypassCache });
+    }
+    const fallbackSearchHints = buildSearchFallback(searchQuery, game, input.scene);
+    const webTriggered = needsFreshWeb || webSearchUnavailable;
+    const webUsed = web.hits.length > 0;
+    const retrievalPolicy = exactLocal
+      ? 'exact-local'
+      : guideIntent
+      ? (webUsed ? 'web-first' : 'manual-fallback')
+      : 'web-fallback';
+
+    const matchMode = game
+      ? (exactLocal ? 'high-confidence-local' : 'low-match-no-web')
+      : 'low-match-no-web';
+    const resolvedMatchMode = webTriggered
+      ? (webUsed
+        ? (retrievalPolicy === 'web-first' ? 'web-first' : strongLocalHits.length && !requireFreshWeb ? 'local-weak+web-fallback' : 'web-fallback')
+        : (guideIntent || explicitWeb.required
+          ? 'low-match-web-empty'
+          : matchMode))
+      : matchMode;
+
+    const webTriggerReason = exactLocal
+      ? '本地存在同游戏、同主题、同问题类型的高置信 QA 命中。'
+      : guideIntent
+      ? `检测到攻略意图 ${guideIntent}，默认联网搜索可追溯来源。`
+      : explicitWeb.required
+      ? explicitWeb.reason
+      : !hasHighLocalMatch
+      ? `本地检索置信度偏低 (count=${localMatchCount}, top=${localTopScore})，先看联网/缓存策略`
+        : '本地检索可信，先使用本地知识。';
+
+    const retainedLocalHits = strongLocalHits.length && (exactLocal || webUsed || !guideIntent || hasHighLocalMatch)
+      ? strongLocalHits
+      : [];
+    const retainedLocalCount = retainedLocalHits.length;
+    const seen = new Set();
+    const hits = [...retainedLocalHits, ...web.hits].filter(item => {
+      if (!item || !item.id) return false;
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    }).slice(0, 8);
+
+    const localCitations = retainedLocalHits.filter(item => item.sourceUrl).map(item => ({
       id: item.id,
       title: item.sourceTitle || item.title,
       url: item.sourceUrl,
@@ -1122,12 +1421,14 @@ class AetherKnowledgeService {
       sourceType: item.sourceType || 'local',
       sourceTier: item.sourceTier || 'local',
     }));
+
     const retrievalSource = [
       ...(accountContext.account ? ['account'] : []),
-      ...(localHits.length ? ['local'] : []),
+      ...(retainedLocalCount ? ['local'] : []),
       ...(web.hits.some(item => item.sourceType === 'community') ? ['community'] : []),
       ...(web.hits.some(item => item.sourceType === 'web') ? ['web'] : []),
     ];
+
     return {
       query: input.query,
       game,
@@ -1136,6 +1437,21 @@ class AetherKnowledgeService {
       filteredSources: web.filteredSources,
       retrievalSource: [...new Set(retrievalSource)],
       tavilyRequestIds: web.tavilyRequestIds,
+      localMatchCount,
+      localTopScore,
+      retainedLocalCount,
+      webTriggered,
+      webUsed,
+      webTriggerReason,
+      webSearchRequired: Boolean(guideIntent && canSearchWeb && !exactLocal),
+      webSearchUnavailableReason: webSearchUnavailable ? '未配置有效 Tavily API key 或未允许联网检索，已切回手动搜索建议模式。' : '',
+      searchHints: fallbackSearchHints,
+      matchMode: resolvedMatchMode,
+      guideIntent,
+      retrievalPolicy,
+      localExactQaMatch: exactLocal,
+      webQueries: web.webQueries || [],
+      extractedUrls: web.extractedUrls || [],
       fromCache: web.fromCache,
       accountContext,
     };
@@ -1153,9 +1469,12 @@ class AetherKnowledgeService {
 
 module.exports = {
   AetherKnowledgeService,
+  loadKnowledgeFile,
   compactText,
   inferGame,
   repairMojibake,
   detectVersion,
   friendlyAccountError,
+  classifyWebNeed,
+  classifyGuideIntent,
 };

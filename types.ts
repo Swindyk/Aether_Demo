@@ -23,6 +23,21 @@ export interface AssistantStatus {
 }
 export type ScreenContextKind = 'game' | 'web' | 'document' | 'chat' | 'system' | 'desktop' | 'other';
 
+export interface CaptureDebugInfo {
+  captureMode?: CaptureMode;
+  selectedSourceId?: string;
+  sourceId?: string;
+  sourceName?: string;
+  displayId?: number | string;
+  hiddenAssistant?: {
+    control?: boolean;
+    answer?: boolean;
+    agentOps?: boolean;
+    delayMs?: number;
+  };
+  fallbackReason?: string;
+}
+
 export interface PersonaProfile {
   id: Persona;
   name: string;
@@ -221,6 +236,8 @@ export interface KnowledgeHit {
   updatedAt?: number;
   sourceType?: RetrievalSource;
   sourceTier?: 'curated' | 'preferred' | 'fallback' | 'local' | 'community';
+  confidence?: number;
+  tags?: string[];
   semanticScore?: number;
   embeddingScore?: number;
 }
@@ -293,6 +310,22 @@ export interface PlayerAnswer {
   text: string;
 }
 
+export type GuideIntent =
+  | ''
+  | 'build'
+  | 'team'
+  | 'mechanic'
+  | 'quest'
+  | 'event'
+  | 'exploration'
+  | 'achievement'
+  | 'story_recap'
+  | 'version_update'
+  | 'abyss/endgame'
+  | 'general_guide';
+
+export type RetrievalPolicy = 'exact-local' | 'web-first' | 'web-fallback' | 'manual-fallback';
+
 export interface KnowledgeSearchResult {
   query: string;
   hits: KnowledgeHit[];
@@ -300,6 +333,21 @@ export interface KnowledgeSearchResult {
   filteredSources: FilteredSource[];
   retrievalSource: RetrievalSource[];
   tavilyRequestIds: string[];
+  localMatchCount?: number;
+  localTopScore?: number;
+  retainedLocalCount?: number;
+  webTriggered?: boolean;
+  webUsed?: boolean;
+  webTriggerReason?: string;
+  webSearchRequired?: boolean;
+  webSearchUnavailableReason?: string;
+  searchHints?: { queryHints?: string[]; siteHints?: string[] };
+  matchMode?: string;
+  guideIntent?: GuideIntent;
+  retrievalPolicy?: RetrievalPolicy;
+  localExactQaMatch?: boolean;
+  webQueries?: string[];
+  extractedUrls?: string[];
   fromCache: boolean;
 }
 
@@ -335,12 +383,30 @@ export interface AgentRunResult {
   requestId: string;
   source: AgentSource;
   inputSourceName: string;
+  captureInfo?: CaptureDebugInfo;
   observation: AgentObservation;
   actions: string[];
   knowledge: KnowledgeHit[];
   citations: AgentCitation[];
   filteredSources: FilteredSource[];
   retrievalSource: RetrievalSource[];
+  webSearchRequired?: boolean;
+  webSearchUnavailableReason?: string;
+  searchHints?: { queryHints?: string[]; siteHints?: string[] };
+  knowledgeMatchMode?: string;
+  knowledgeMatch?: {
+    localMatchCount: number;
+    localTopScore: number;
+    retainedLocalCount: number;
+    webTriggered: boolean;
+    webUsed: boolean;
+    webTriggerReason: string;
+  };
+  guideIntent?: GuideIntent;
+  retrievalPolicy?: RetrievalPolicy;
+  localExactQaMatch?: boolean;
+  webQueries?: string[];
+  extractedUrls?: string[];
   accountContextUsed?: AccountContext;
   analysisMode: AnalysisMode;
   tavilyRequestIds: string[];
@@ -364,6 +430,7 @@ export interface AgentRunInput {
   accountKey?: string;
   reuseLastObservation?: boolean;
   parentRunId?: string;
+  captureInfo?: CaptureDebugInfo;
 }
 
 export interface AgentConversationMessage {
@@ -415,6 +482,8 @@ export interface AetherDesktopApi {
   getConversation: (input?: { accountKey?: string; conversationId?: string }) => Promise<AgentConversation | undefined>;
   selectConversation: (input: { accountKey?: string; conversationId: string }) => Promise<AgentConversation>;
   openConversation: (input: { accountKey?: string; conversationId: string }) => Promise<{ conversation: AgentConversation; run?: AgentRunResult }>;
+  deleteConversation: (input: { accountKey?: string; conversationId: string; deleteLinkedRuns?: boolean }) => Promise<{ deleted: boolean; conversationId: string; accountKey: string; runsDeleted: number; cacheDeleted: number; memoryDeleted: number }>;
+  clearConversations: (input?: { accountKey?: string; includeAll?: boolean; deleteLinkedRuns?: boolean; clearMemory?: boolean }) => Promise<{ cleared: number; includeAll: boolean; accountKey?: string; runsDeleted: number; cacheDeleted: number; memoryDeleted: number }>;
   askConversation: (input: { conversationId?: string; accountKey?: string; query: string; persona?: Persona; scene?: SceneId; parentRunId?: string; analysisMode?: AnalysisMode }) => Promise<AgentRunResult>;
   newConversationFromScan: () => Promise<AgentRunResult | undefined>;
   checkHealth: () => Promise<HealthResult>;
@@ -437,6 +506,8 @@ export interface AetherDesktopApi {
   onShowLatest: (callback: (run?: AgentRunResult) => void) => () => void;
   onConversationSelected: (callback: (conversation: AgentConversation) => void) => () => void;
   onConversationOpened: (callback: (payload: { conversation: AgentConversation; run?: AgentRunResult }) => void) => () => void;
+  onConversationDeleted: (callback: (payload: { deleted: boolean; conversationId: string; accountKey: string }) => void) => () => void;
+  onConversationsCleared: (callback: (payload: { cleared: number; includeAll: boolean; accountKey?: string }) => void) => () => void;
   onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void;
   onWarmupProgress: (callback: (progress: { current: number; total: number; name: string }) => void) => () => void;
   onAssistantStatusChanged: (callback: (status: AssistantStatus) => void) => () => void;

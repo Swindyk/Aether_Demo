@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   ChevronRight,
   Database,
@@ -9,57 +9,56 @@ import {
   ScanEye,
   Send,
   Settings2,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { PERSONA_PROFILES } from '../constants';
-import { AgentConversation, AppState, AssistantStatus, DesktopSource, GameAccount, GameId, SceneId } from '../types';
+import { AgentConversation, AgentConversationMessage, AppState, AssistantStatus, DesktopSource, GameAccount, GameId, SceneId } from '../types';
 
 const AVATAR_SRC = './brand/aether-avatar.png';
 const DEMO_Genshin_UID = '167910237';
 
 const painPoints: Array<{ id: SceneId; title: string; desc: string; prompt: string }> = [
-  { id: 'gear', title: '装备要不要换', desc: '词条 适配 提升空间', prompt: '帮我判断当前装备值不值得换，直接给结论和下一步' },
-  { id: 'roster', title: '这队能不能打', desc: '配队 循环 生存风险', prompt: '帮我看这套队伍能不能打，指出最大问题和调整建议' },
-  { id: 'story', title: '剧情人物是谁', desc: '人物关系 防剧透解释', prompt: '帮我解释当前剧情人物和线索，不要剧透后续内容' },
-  { id: 'explore', title: '探索卡在哪', desc: '路线 解谜 可见线索', prompt: '我卡点了，帮我根据当前画面找下一步线索' },
+  { id: 'gear', title: '装备是否可换', desc: '当前面板是否有可替换装备可确认', prompt: '先判断当前界面和可见装备，再给出换装建议。' },
+  { id: 'roster', title: '这队能不能打', desc: '查看当前角色、定位与输出关系', prompt: '先确认当前阵容角色与敌方状态，给出可行打法。' },
+  { id: 'story', title: '剧情讲到哪', desc: '根据画面提示剧情进度', prompt: '先标注当前位置与未完成目标，再给出接下去建议。' },
+  { id: 'explore', title: '探索卡在哪', desc: '根据地图与目标提示探索路径', prompt: '先确认当前区域与任务目标，再给出下一步探索建议。' },
 ];
 
 const personaDemo = [
   {
-    name: '新手玩家',
-    text: '先告诉我现在按什么 做什么 少讲术语',
+    name: '沉稳向导',
+    text: '我先判断当前画面，再给出可执行建议。',
   },
   {
-    name: '进阶玩家',
-    text: '直接判断收益 风险和替代方案',
+    name: '成长向导',
+    text: '先检查当前收益与瓶颈，再给出下一步方向。',
   },
   {
-    name: '剧情玩家',
-    text: '解释人物关系 默认防剧透',
+    name: '剧情向导',
+    text: '先看当前剧情脉络，再给出接续建议。',
   },
 ];
 
 const resultLabel = {
-  live: '实时分析',
-  cache: '缓存回放',
-  error: '分析失败',
+  live: '实时解析',
+  cache: '历史复用',
+  error: '解析失败',
 };
 
 const statusLabel: Record<AssistantStatus['state'], string> = {
-  idle: '等待解读',
-  capturing: '正在捕获画面',
-  analyzing: '正在分析',
-  ready: '回答已准备',
-  error: '上次分析失败',
+  idle: '待机中',
+  capturing: '截图中',
+  analyzing: '分析中',
+  ready: '结果就绪',
+  error: '解析异常',
 };
 
 const fallbackSourceName = (id?: string) => ({
-  'demo:gear': '原神 · 装备搭配',
-  'demo:roster': '原神 · 队伍配置',
-  'demo:story': '星穹铁道 · 剧情回顾',
-  'demo:explore': '星穹铁道 · 探索指引',
-}[id || ''] || '鼠标所在屏幕');
+  'demo:gear': '示例面板：装备建议',
+  'demo:roster': '示例面板：角色调整',
+  'demo:story': '示例面板：剧情入口',
+  'demo:explore': '示例面板：探索目标',
+  }[id || ''] || '默认来源');
 
 const formatConversationTime = (timestamp?: number) => {
   if (!timestamp) return '';
@@ -71,8 +70,24 @@ const formatConversationTime = (timestamp?: number) => {
   }).format(new Date(timestamp));
 };
 
+const looksGarbled = (value?: string) => /[�]|[鎴鏄浠闂绛鍘鏆鍙鐢鍦鍛瑙妯鐘榧閫鎵鏈鍚娓瀹鐜鑷閲]{2,}/.test(String(value || ''));
+
+const displayText = (value: string | undefined, fallback: string) => {
+  const text = String(value || '').trim();
+  return text && !looksGarbled(text) ? text : fallback;
+};
+
+type FollowUpMessageMap = Record<string, AgentConversationMessage[]>;
+
+type ActiveFollowUp = {
+  conversationId: string;
+  conversationKeys: string[];
+  messageId: string;
+  sentAt: number;
+};
+
 const conversationTitle = (conversation: AgentConversation) => (
-  conversation.title || conversation.lastObservation?.summary || '历史会话'
+  displayText(conversation.title || conversation.lastObservation?.summary, '历史会话')
 );
 
 const safeAnswer = (latest?: AppState['latestRun']) => {
@@ -80,10 +95,10 @@ const safeAnswer = (latest?: AppState['latestRun']) => {
   if (latest.playerAnswer) {
     return {
       conclusion: latest.playerAnswer.conclusion || latest.observation.summary,
-      currentTeam: latest.playerAnswer.currentTeam || '当前截图没有稳定识别到完整队伍。',
+      currentTeam: latest.playerAnswer.currentTeam || '当前画面未确认可用队伍信息。',
       betterTeams: latest.playerAnswer.betterTeams || [],
       buildAdvice: latest.playerAnswer.buildAdvice || [],
-      basis: latest.playerAnswer.basis || '基于截图和账号角色判断',
+      basis: latest.playerAnswer.basis || '基于当前画面与可见信息给出判断。',
       sourcesUsed: latest.playerAnswer.sourcesUsed || [],
       text: latest.playerAnswer.text || latest.answer,
     };
@@ -94,10 +109,10 @@ const safeAnswer = (latest?: AppState['latestRun']) => {
     .filter(line => line && !/ModelScope|choices|JSON|自动重试|重试|request|runtime|trace/i.test(line));
   return {
     conclusion: lines[0] || latest.observation.summary,
-    currentTeam: lines[1] || '当前截图没有稳定识别到完整队伍。',
+    currentTeam: lines[1] || '当前画面未确认可用队伍信息。',
     betterTeams: [],
     buildAdvice: lines.slice(2, 5),
-    basis: latest.citations.length ? '参考已采用攻略来源' : '基于截图和账号角色判断',
+    basis: latest.citations.length ? '参考了以下来源证据' : '基于当前画面与可见信息给出判断。',
     sourcesUsed: latest.citations.map(item => item.author || item.title).slice(0, 3),
     text: lines.join('\n'),
   };
@@ -105,7 +120,7 @@ const safeAnswer = (latest?: AppState['latestRun']) => {
 
 export const PlayerHome: React.FC = () => {
   const [state, setState] = useState<AppState>();
-  const [status, setStatus] = useState<AssistantStatus>({ state: 'idle', message: '按 Alt+Q 解读当前画面' });
+  const [status, setStatus] = useState<AssistantStatus>({ state: 'idle', message: '待机中' });
   const [busy, setBusy] = useState<'scan' | ''>('');
   const [notice, setNotice] = useState('');
   const [accounts, setAccounts] = useState<GameAccount[]>([]);
@@ -116,6 +131,10 @@ export const PlayerHome: React.FC = () => {
   const [recentConversations, setRecentConversations] = useState<AgentConversation[]>([]);
   const [followUpText, setFollowUpText] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
+  const [inFlightMessages, setInFlightMessages] = useState<FollowUpMessageMap>({});
+  const [activeFollowUp, setActiveFollowUp] = useState<ActiveFollowUp | null>(null);
+  const [thinkingDots, setThinkingDots] = useState(0);
+  const chatListRef = useRef<HTMLDivElement>(null);
 
   const refresh = async () => {
     if (!window.aether) return;
@@ -133,6 +152,46 @@ export const PlayerHome: React.FC = () => {
     setRecentConversations(nextConversations);
   };
 
+  const conversationKeys = (conversation?: AgentConversation | null) => {
+    if (!conversation?.id) return [];
+    const keys = new Set<string>([conversation.id]);
+    if (conversation.accountKey) keys.add(`${conversation.accountKey}::${conversation.id}`);
+    return [...keys];
+  };
+
+  const clearInFlightByConversation = (keys?: string[]) => {
+    if (!keys?.length) return;
+    setInFlightMessages(previous => {
+      let touched = false;
+      const next = { ...previous };
+      for (const key of keys) {
+        if (!(key in next)) continue;
+        delete next[key];
+        touched = true;
+      }
+      return touched ? next : previous;
+    });
+  };
+
+  const appendInFlightMessage = (keys: string[], message: AgentConversationMessage) => {
+    if (!keys.length) return;
+    setInFlightMessages(previous => {
+      const next = { ...previous };
+      for (const key of keys) {
+        next[key] = [...(next[key] || []), message];
+      }
+      return next;
+    });
+  };
+
+  const dedupeMessages = (items: AgentConversationMessage[]) => {
+    const map = new Map<string, AgentConversationMessage>();
+    for (const item of items) {
+      map.set(item.id, item);
+    }
+    return [...map.values()];
+  };
+
   useEffect(() => {
     void refresh();
     const removeRun = window.aether?.onRunComplete(run => {
@@ -146,14 +205,35 @@ export const PlayerHome: React.FC = () => {
       setState(previous => previous ? { ...previous, currentConversation: conversation } : previous);
       void refresh();
     });
+    const removeConversationDeleted = window.aether?.onConversationDeleted(() => void refresh());
+    const removeConversationsCleared = window.aether?.onConversationsCleared(() => void refresh());
     return () => {
       removeRun?.();
       removeSettings?.();
       removeStatus?.();
       removeShowLatest?.();
       removeConversationSelected?.();
+      removeConversationDeleted?.();
+      removeConversationsCleared?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!chatBusy) {
+      setThinkingDots(0);
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setThinkingDots(value => (value + 1) % 7);
+    }, 320);
+    return () => window.clearInterval(timer);
+  }, [chatBusy]);
+
+  useEffect(() => {
+    const node = chatListRef.current;
+    if (!node) return;
+    node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' });
+  }, [state?.currentConversation?.messages.length, chatBusy, thinkingDots, Object.values(inFlightMessages).reduce((acc, curr) => acc + curr.length, 0)]);
 
   const update = async (patch: Parameters<NonNullable<typeof window.aether>['updateSettings']>[0]) => {
     if (!window.aether || !state) return;
@@ -170,11 +250,10 @@ export const PlayerHome: React.FC = () => {
       if (run) {
         await refresh();
         const runError = run.errors?.length ? run.errors[run.errors.length - 1] : undefined;
-        setNotice(run.source === 'error' ? `这次没有完成分析：${runError?.message || run.summary}` : '已完成当前画面解读。');
+        setNotice(run.source === 'error' ? `本次未完成解析：${runError?.message || run.summary}` : '已生成本次画面解读。');
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '这次没有完成画面解读');
-    } finally {
+      setNotice(error instanceof Error ? error.message : '本次启动分析失败，请稍后重试。');
       setBusy('');
     }
   };
@@ -187,9 +266,9 @@ export const PlayerHome: React.FC = () => {
       const account = await window.aether.connectAccount({ game: accountGame, uid: uid.trim() });
       setUid('');
       setAccounts(await window.aether.listAccounts());
-      setNotice(account.error ? `账号已保存，同步暂未完成：${account.error}` : `已同步 ${account.nickname || account.label} 的 ${account.characterCount} 个公开角色`);
+      setNotice(account.error ? ('连接账号失败：' + account.error) : ('已连接角色：' + (account.nickname || account.label) + '，角色数 ' + account.characterCount));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '账号连接失败');
+      setNotice(error instanceof Error ? error.message : '账号连接失败。');
     } finally {
       setAccountBusy('');
     }
@@ -201,9 +280,9 @@ export const PlayerHome: React.FC = () => {
     try {
       await window.aether.syncAccount(accountId);
       setAccounts(await window.aether.listAccounts());
-      setNotice('公开角色状态已更新');
+      setNotice('公开角色状态已更新。');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '账号同步失败');
+      setNotice(error instanceof Error ? error.message : '账号同步失败。');
     } finally {
       setAccountBusy('');
     }
@@ -215,51 +294,90 @@ export const PlayerHome: React.FC = () => {
     try {
       await window.aether.removeAccount(accountId);
       setAccounts(await window.aether.listAccounts());
-      setNotice('已断开该公开 UID');
+      setNotice('已断开该公开 UID。');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '账号断开失败');
+      setNotice(error instanceof Error ? error.message : '账号断开失败。');
     } finally {
       setAccountBusy('');
     }
   };
 
   const askPainPoint = async (item: typeof painPoints[number]) => {
-    if (!window.aether || busy) return;
+    if (!window.aether) return;
     try {
       const settings = await window.aether.updateSettings({ selectedScene: item.id });
       setState(previous => previous ? { ...previous, settings } : previous);
-      setNotice(`已选中：“${item.title}”。点击“让我看看”后开始解读。`);
+      setNotice('已选择卡点：' + item.title + '，可按 Alt+Q 切换到当前会话并解析。');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '这次没有完成画面解读');
+      setNotice(error instanceof Error ? error.message : '问题类型切换失败。');
     }
   };
 
   const askFollowUp = async () => {
     const text = followUpText.trim();
     if (!window.aether || !text || chatBusy) return;
-    const conversationId = state?.currentConversation?.id || latest?.conversationId;
-    if (!conversationId) {
-      setNotice('请先按 Alt+Q 或点击“让我看看”创建一个会话');
+    const conversation = state?.currentConversation;
+    if (!conversation) {
+      setNotice('请先按 Alt+Q 解读一次当前画面后再追问。');
       return;
     }
-    setChatBusy(true);
-    setNotice('');
-    try {
-      await window.aether.askConversation({
-        conversationId,
-        accountKey: state?.currentConversation?.accountKey || latest?.accountKey,
-        query: text,
-        persona: state?.settings.persona,
-        scene: state?.currentConversation?.scene || latest?.scene || state?.settings.selectedScene || 'unknown',
-        parentRunId: state?.currentConversation?.lastRunId || latest?.id,
-      });
+    const conversationId = conversation.id;
+    const accountKey = conversation.accountKey;
+    const targetConversationKeys = conversationKeys(conversation);
+    if (!conversationId || !targetConversationKeys.length) {
+      setNotice('当前会话信息异常，请重新按 Alt+Q 解读。');
+      return;
+    }
+    const sentAt = Date.now();
+    const optimisticMessage: AgentConversationMessage = {
+      id: 'pending-user-' + sentAt,
+      role: 'user',
+      text,
+      timestamp: sentAt,
+    };
+    appendInFlightMessage(targetConversationKeys, optimisticMessage);
+    setActiveFollowUp({
+      conversationId,
+      conversationKeys: targetConversationKeys,
+      messageId: optimisticMessage.id,
+      sentAt,
+    });
       setFollowUpText('');
+      setChatBusy(true);
+      setNotice('');
+      try {
+        const runResult = await window.aether.askConversation({
+          conversationId,
+          ...(accountKey ? { accountKey } : {}),
+          query: text,
+          persona: state?.settings.persona,
+          scene: conversation?.scene || latest?.scene || state?.settings.selectedScene || 'unknown',
+          parentRunId: conversation?.lastRunId || latest?.id,
+        });
+        const opened = await window.aether.openConversation({
+          ...(accountKey ? { accountKey } : {}),
+          conversationId,
+        });
+      setState(previous => previous ? {
+        ...previous,
+        currentConversation: opened.conversation,
+        latestRun: opened.run || runResult || previous.latestRun,
+      } : previous);
       await refresh();
-      setNotice('已基于当前会话继续回答');
+      clearInFlightByConversation(targetConversationKeys);
+      setNotice('追问已发送，等待以太返回。');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '追问失败，请稍后再试');
+      const message = error instanceof Error ? error.message : '追问失败，请稍后再试。';
+      appendInFlightMessage(targetConversationKeys, {
+        id: 'pending-error-' + Date.now(),
+        role: 'model',
+        text: 'error: ' + message,
+        timestamp: Date.now(),
+      });
+      setNotice(message);
     } finally {
       setChatBusy(false);
+      setActiveFollowUp(null);
     }
   };
 
@@ -276,10 +394,10 @@ export const PlayerHome: React.FC = () => {
         latestRun: opened.run || previous.latestRun,
       } : previous);
       setRecentConversations(await window.aether.getConversations({ limit: 3 }));
-      setNotice('已打开这条历史会话，可以继续问。');
+      setNotice('已打开该会话，可继续追问。');
       document.getElementById('latest-answer')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '打开历史会话失败');
+      setNotice(error instanceof Error ? error.message : '鎵撳紑鍘嗗彶浼氳瘽澶辫触');
     }
   };
 
@@ -288,14 +406,14 @@ export const PlayerHome: React.FC = () => {
     if (sourceId === 'cursor-display') {
       const result = await window.aether.followScreen({ continuous: false });
       setState(previous => previous ? { ...previous, settings: result.settings } : previous);
-      setNotice(`已改为：${result.sourceName}`);
+      setNotice('已切换来源：' + result.sourceName);
       return;
     }
     const source = sources.find(item => item.id === sourceId);
     if (!source) return;
     const nextSettings = await window.aether.selectSource(source);
     setState(previous => previous ? { ...previous, settings: nextSettings } : previous);
-    setNotice(`已选择：${source.name}`);
+    setNotice('已选择来源：' + source.name);
   };
 
   if (!window.aether) {
@@ -312,12 +430,27 @@ export const PlayerHome: React.FC = () => {
   const conversation = state?.currentConversation;
   const latestMatchesConversation = !conversation?.lastRunId || latest?.id === conversation.lastRunId;
   const activeRun = latestMatchesConversation ? latest : undefined;
+  const currentConversationKeys = conversation ? conversationKeys(conversation) : [];
+  const inFlightForCurrent = dedupeMessages(currentConversationKeys.flatMap(key => inFlightMessages[key] || []));
+  const shouldShowThinking = chatBusy && activeFollowUp?.conversationId === conversation?.id;
+  const thinkingMessage: AgentConversationMessage | undefined = shouldShowThinking ? {
+    id: 'pending-thinking',
+    role: 'model',
+    text: '以太思考中' + '.'.repeat(thinkingDots),
+    timestamp: Date.now(),
+  } : undefined;
+  const visibleConversationMessages = [
+    ...(conversation?.messages || []),
+    ...inFlightForCurrent,
+    ...(thinkingMessage ? [thinkingMessage] : []),
+  ];
   const profile = PERSONA_PROFILES.find(item => item.id === state?.settings.persona) ?? PERSONA_PROFILES[0];
+  const activePainPoint = painPoints.find(item => item.id === state?.settings.selectedScene);
   const currentSource = state?.settings.selectedSourceName || fallbackSourceName(state?.settings.selectedSourceId);
   const latestError = activeRun?.source === 'error' && activeRun.errors?.length ? activeRun.errors[activeRun.errors.length - 1] : undefined;
-  const staleTokenError = Boolean(latestError?.message.includes('未配置模型服务') && state?.runtime.tokenConfigured);
+  const staleTokenError = Boolean(latestError?.message.includes('token') && state?.runtime.tokenConfigured);
   const displayAnswer = safeAnswer(activeRun);
-  const activeSummary = conversation?.lastObservation?.summary || activeRun?.observation.summary || '还没有开始解读';
+  const activeSummary = displayText(conversation?.lastObservation?.summary || activeRun?.observation.summary, '还没有解读过画面');
 
   return (
     <div className="min-h-screen overflow-hidden bg-[#071018] text-white">
@@ -329,45 +462,47 @@ export const PlayerHome: React.FC = () => {
             <img src={AVATAR_SRC} alt="以太" className="h-12 w-12 object-contain" />
             <div>
               <h1 className="text-xl font-semibold">以太</h1>
-              <p className="text-xs text-white/45">卡点时按一下的 AI 游戏助手</p>
+              <p className="text-xs text-white/45">你的 AI 助手工作台</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className={`hidden items-center gap-2 text-xs md:flex ${state?.runtime.tokenConfigured ? 'text-emerald-200' : 'text-yellow-200'}`}>
               <span className={`h-2 w-2 rounded-full ${state?.runtime.tokenConfigured ? 'bg-emerald-400' : 'bg-yellow-400'}`} />
-              {state?.runtime.tokenConfigured ? '模型已连接' : '等待连接'}
+              {state?.runtime.tokenConfigured ? '模型已连接' : '未连接'}
             </span>
-            <button onClick={() => window.aether?.openAgentOps()} className="rounded-xl p-2.5 text-white/35 transition hover:bg-white/5 hover:text-white" title="以太后台">
+            <button onClick={() => window.aether?.openAgentOps()} className="rounded-xl p-2.5 text-white/35 transition hover:bg-white/5 hover:text-white" title="打开后台">
               <Settings2 size={17} />
             </button>
           </div>
         </div>
       </header>
-
       <main className="relative z-10 mx-auto max-w-7xl space-y-6 px-7 pb-10">
         <section className="relative min-h-[390px] overflow-hidden rounded-[32px] border border-white/10 bg-[#0a1720]">
           <img src="./demo/genshin-roster.png" alt="" className="absolute inset-0 h-full w-full object-cover opacity-38" />
           <div className="absolute inset-0 bg-gradient-to-r from-[#071018] via-[#071018]/90 to-[#071018]/30" />
           <div className="relative z-[2] flex min-h-[390px] max-w-2xl flex-col justify-center p-9 md:p-12">
-            <div className="mb-5 flex items-center gap-2 text-sm text-aether-200"><Sparkles size={16} />Alt+Q 让我看看</div>
             <h2 className="flex flex-col gap-3 text-4xl font-semibold leading-none md:gap-4 md:text-5xl">
               <span>卡点了？</span>
               <span>我来看看</span>
             </h2>
             <p className="mt-5 max-w-lg text-sm leading-7 text-white/60">
-              不用切出去翻攻略，按一下Alt+Q，让以太先看懂你卡在哪。
+              按 Alt+Q 或点一下按钮，让以太看当前画面。
+            </p>
+            <p className="mt-3 text-xs text-aether-100/65">
+              {activePainPoint ? `当前问题：${activePainPoint.title}` : '默认会自动扫描当前画面'}
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <button onClick={analyzeNow} disabled={Boolean(busy) || status.state === 'capturing' || status.state === 'analyzing'} className="flex items-center gap-2 rounded-2xl bg-aether-300 px-6 py-3 text-sm font-semibold text-[#071018] shadow-[0_12px_32px_rgba(45,212,191,0.25)] transition hover:bg-aether-200 disabled:opacity-50">
-                <ScanEye size={16} />{busy || status.state === 'capturing' || status.state === 'analyzing' ? '正在看' : '让我看看'}
+                <ScanEye size={16} />{busy || status.state === 'capturing' || status.state === 'analyzing' ? '识别中...' : '看当前画面'}
               </button>
               <button onClick={() => window.aether?.showLatest()} className="flex items-center gap-2 rounded-2xl border border-white/15 bg-black/25 px-5 py-3 text-sm text-white/75 backdrop-blur transition hover:bg-white/10">
-                最近回答 <ChevronRight size={16} />
+                最近回答<ChevronRight size={16} />
               </button>
             </div>
             <p className="mt-4 text-xs text-aether-100/60">
-              {statusLabel[status.state]} · {status.message}
-              {status.shortcutReady === false && !status.message.includes('快捷键') ? ' · 热键冲突 可点按钮' : ''}
+              {status.state === 'capturing' || status.state === 'analyzing' ? statusLabel[status.state] : statusLabel[status.state]}
+              {status.state === 'error' && status.message ? ` 路 ${status.message}` : ''}
+              {status.shortcutReady === false && !status.message.includes('快捷键') ? ' 路 快捷键：默认 Alt+Q 触发识别' : ''}
             </p>
             {notice && <p className="mt-4 text-xs text-aether-100/75">{notice}</p>}
           </div>
@@ -383,7 +518,7 @@ export const PlayerHome: React.FC = () => {
             >
               <p className="text-lg font-semibold">{item.title}</p>
               <p className="mt-2 text-xs text-white/42">{item.desc}</p>
-              <p className="mt-5 flex items-center gap-1 text-xs text-aether-200">按这个问 <ChevronRight size={13} /></p>
+              <p className="mt-5 flex items-center gap-1 text-xs text-aether-200">{state?.settings.selectedScene === item.id ? '已选择' : '选择这个问题'} <ChevronRight size={13} /></p>
             </button>
           ))}
         </section>
@@ -401,12 +536,12 @@ export const PlayerHome: React.FC = () => {
                   className={`rounded-2xl border p-3 text-left transition ${item === PERSONA_PROFILES[0] ? 'col-span-2' : ''} ${state?.settings.persona === item.id ? 'border-aether-300/55 bg-aether-300/10 text-white' : 'border-white/8 bg-black/15 text-white/45 hover:border-white/20 hover:text-white/75'}`}
                 >
                   <p className="text-sm font-medium">{item.name}</p>
-                  <p className="mt-1 truncate text-[11px]">{item.focus[0]} · {item.focus[1]}</p>
+                  <p className="mt-1 truncate text-[11px]">{item.focus[0]} 路 {item.focus[1]}</p>
                 </button>
               ))}
             </div>
             <div className="mt-5 rounded-2xl border border-aether-300/15 bg-aether-300/[0.05] p-4">
-              <p className="text-xs text-aether-200">同一张截图会这样变</p>
+              <p className="text-xs text-aether-200">同一张截图可以这样问</p>
               <div className="mt-3 space-y-2">
                 {personaDemo.map(item => (
                   <p key={item.name} className="grid grid-cols-[72px_1fr] gap-2 text-xs leading-5 text-white/52">
@@ -421,28 +556,38 @@ export const PlayerHome: React.FC = () => {
           <div id="latest-answer" className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs text-aether-200">最近一次回答</p>
+                <p className="text-xs text-aether-200">最近回答</p>
                 <h3 className="mt-1 text-xl font-semibold">{activeSummary}</h3>
               </div>
-              {activeRun
-                ? <span className="shrink-0 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45">{resultLabel[activeRun.source]}</span>
-                : conversation && <span className="shrink-0 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45">历史会话</span>}
+              {activeRun ? (
+                <span className="shrink-0 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45">
+                  {resultLabel[activeRun.source]}
+                </span>
+              ) : conversation ? (
+                <span className="shrink-0 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45">历史会话</span>
+              ) : null}
             </div>
             {recentConversations.length > 0 && (
               <div className="mt-4 border-t border-white/8 pt-4">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-xs text-white/45">最近会话</p>
-                  <span className="text-[11px] text-white/28">点开后可以接着问</span>
+                  <span className="text-[11px] text-white/28">点击切换到历史会话</span>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {recentConversations.map(item => (
                     <button
                       key={item.id}
                       onClick={() => void openConversation(item)}
-                      className={`min-h-20 rounded-2xl border px-3 py-2 text-left transition ${conversation?.id === item.id ? 'border-aether-300/45 bg-aether-300/[0.08]' : 'border-white/10 bg-black/15 hover:border-aether-300/30'}`}
+                      className={`min-h-20 rounded-2xl border px-3 py-2 text-left transition ${
+                        conversation?.id === item.id
+                          ? 'border-aether-300/45 bg-aether-300/[0.08]'
+                          : 'border-white/10 bg-black/15 hover:border-aether-300/30'
+                      }`}
                     >
                       <p className="line-clamp-2 text-xs font-medium leading-5 text-white/72">{conversationTitle(item)}</p>
-                      <p className="mt-1 text-[11px] text-white/32">{formatConversationTime(item.updatedAt)} · {Math.ceil(item.messageCount / 2)} 轮</p>
+                      <p className="mt-1 text-[11px] text-white/32">
+                        {formatConversationTime(item.updatedAt)} · {Math.ceil(item.messageCount / 2)} 轮
+                      </p>
                     </button>
                   ))}
                 </div>
@@ -462,11 +607,14 @@ export const PlayerHome: React.FC = () => {
                     </div>
                     {displayAnswer.betterTeams.length > 0 && (
                       <div>
-                        <p className="text-xs text-aether-200">更优选择</p>
+                        <p className="text-xs text-aether-200">更优建议</p>
                         <div className="mt-2 space-y-2">
                           {displayAnswer.betterTeams.map(team => (
                             <div key={`${team.title}-${team.members.join('-')}`} className="rounded-2xl border border-white/8 bg-black/15 p-3">
-                              <p className="text-sm font-medium text-white/82">{team.title}{team.members.length ? ` · ${team.members.join(' / ')}` : ''}</p>
+                              <p className="text-sm font-medium text-white/82">
+                                {team.title}
+                                {team.members.length ? ` · ${team.members.join(' / ')}` : ''}
+                              </p>
                               <p className="mt-1 text-xs leading-5 text-white/50">{team.reason}</p>
                             </div>
                           ))}
@@ -477,22 +625,34 @@ export const PlayerHome: React.FC = () => {
                       <div>
                         <p className="text-xs text-aether-200">养成建议</p>
                         <div className="mt-2 space-y-1.5">
-                          {displayAnswer.buildAdvice.slice(0, 3).map(item => <p key={item} className="text-xs leading-5 text-white/55">· {item}</p>)}
+                          {displayAnswer.buildAdvice.slice(0, 3).map(item => (
+                            <p key={item} className="text-xs leading-5 text-white/55">· {item}</p>
+                          ))}
                         </div>
                       </div>
                     )}
-                    <p className="rounded-2xl border border-aether-300/15 bg-aether-300/[0.045] px-4 py-3 text-xs leading-5 text-white/50">依据：{displayAnswer.basis}</p>
+                    <p className="rounded-2xl border border-aether-300/15 bg-aether-300/[0.045] px-4 py-3 text-xs leading-5 text-white/50">
+                      依据：{displayAnswer.basis}
+                    </p>
                   </div>
                 )}
                 {latestError && (
                   <p className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/[0.06] px-4 py-3 text-xs leading-6 text-red-100/75">
-                    {staleTokenError ? '这是旧失败记录。重新解读当前画面即可生成新结果。' : '这次没有生成可靠答案，请稍后再试。'}
+                    {staleTokenError
+                      ? '检测到 token 异常，建议稍后重试或检查模型配置。'
+                      : '本次未生成结果，请稍后再试。'}
                   </p>
                 )}
                 {activeRun?.citations.length ? (
                   <div className="mt-4 flex flex-wrap gap-2">
                     {activeRun.citations.slice(0, 3).map(citation => (
-                      <a key={citation.id} href={citation.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45 hover:text-white">
+                      <a
+                        key={citation.id}
+                        href={citation.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-white/45 hover:text-white"
+                      >
                         <ExternalLink size={11} />{citation.author || citation.title}
                       </a>
                     ))}
@@ -500,20 +660,29 @@ export const PlayerHome: React.FC = () => {
                 ) : null}
                 <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="flex items-center gap-2 text-sm font-medium text-aether-100"><MessageSquare size={15} />继续追问</p>
+                    <p className="flex items-center gap-2 text-sm font-medium text-aether-100"><MessageSquare size={15} />会话对话</p>
                     <span className="text-[11px] text-white/35">{conversation?.accountKey || activeRun?.accountKey || 'local:default'}</span>
                   </div>
-                  {conversation?.messages?.length ? (
-                    <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
-                      {conversation.messages.slice(-8).map(message => (
-                        <div key={message.id} className={`rounded-xl border px-3 py-2 text-xs leading-5 ${message.role === 'user' ? 'ml-8 border-aether-300/20 bg-aether-300/[0.06] text-aether-50' : 'mr-8 border-white/8 bg-white/[0.035] text-white/58'}`}>
-                          <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-white/28">{message.role === 'user' ? '玩家' : '以太'}</p>
-                          <p>{message.text}</p>
+                  {visibleConversationMessages.length ? (
+                    <div ref={chatListRef} className="mt-3 max-h-56 space-y-2 overflow-auto pr-1" aria-live="polite">
+                      {visibleConversationMessages.slice(-8).map(message => (
+                        <div
+                          key={message.id}
+                          className={`rounded-xl border px-3 py-2 text-xs leading-5 ${
+                            message.role === 'user' ? 'ml-8 border-aether-300/20 bg-aether-300/[0.06] text-aether-50' : 'mr-8 border-white/8 bg-white/[0.035] text-white/58'
+                          }`}
+                        >
+                          <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-white/28">
+                            {message.role === 'user' ? '玩家' : '以太'}
+                          </p>
+                          <p>{displayText(message.text, message.role === 'user' ? '旧问题内容编码异常' : '旧回答内容编码异常')}</p>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-3 rounded-xl border border-dashed border-white/10 px-3 py-3 text-xs leading-5 text-white/35">本次解读已经创建会话，接着问会参考刚才的画面和资料。</p>
+                    <p className="mt-3 rounded-xl border border-dashed border-white/10 px-3 py-3 text-xs leading-5 text-white/35">
+                      当前还没有会话消息，按 Alt+Q 先解读一次画面再继续追问。
+                    </p>
                   )}
                   <div className="mt-3 flex gap-2">
                     <textarea
@@ -522,7 +691,7 @@ export const PlayerHome: React.FC = () => {
                       onKeyDown={event => {
                         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void askFollowUp();
                       }}
-                      placeholder="继续问：比如我现在先换武器还是先调整队伍？"
+                      placeholder="继续追问，按 Enter 发送"
                       className="min-h-16 flex-1 resize-none rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/75 outline-none placeholder:text-white/25 focus:border-aether-300/45"
                     />
                     <button
@@ -539,14 +708,14 @@ export const PlayerHome: React.FC = () => {
             ) : (
               <div className="mt-5 space-y-4">
                 <div className="rounded-2xl border border-dashed border-white/10 p-5 text-sm leading-6 text-white/40">
-                  按 Alt+Q 或点“让我看看”，以太会看当前截图并给短答案。
+                  目前还没有本次运行结果，先按 Alt+Q 解读当前画面，再来追问。
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4 opacity-70">
-                  <p className="flex items-center gap-2 text-sm font-medium text-aether-100"><MessageSquare size={15} />继续追问</p>
+                  <p className="flex items-center gap-2 text-sm font-medium text-aether-100"><MessageSquare size={15} />会话对话</p>
                   <div className="mt-3 flex gap-2">
                     <textarea
                       disabled
-                      placeholder="先解读一次画面，就能在这里接着问。"
+                      placeholder="请先解读当前画面后再继续追问"
                       className="min-h-16 flex-1 resize-none rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/55 outline-none placeholder:text-white/25"
                     />
                     <button disabled className="flex h-16 w-14 items-center justify-center rounded-xl bg-aether-300 text-[#071018] opacity-35" title="发送追问">
@@ -556,66 +725,122 @@ export const PlayerHome: React.FC = () => {
                 </div>
               </div>
             )}
-          </div>
-        </section>
-
-        <section className="grid gap-5 rounded-3xl border border-white/10 bg-white/[0.03] p-6 lg:grid-cols-[0.9fr_1.1fr]">
+           </div>
+         </section>
+         <section className="grid gap-5 rounded-3xl border border-white/10 bg-white/[0.03] p-6 lg:grid-cols-[0.9fr_1.1fr]">
           <div>
-            <div className="flex items-center gap-2 text-xs text-aether-200"><Link2 size={14} />让建议更懂你的账号</div>
-            <h3 className="mt-2 text-xl font-semibold">连接公开角色展示</h3>
-            <p className="mt-2 text-sm leading-6 text-white/45">只读取你主动公开的角色与装备，不需要登录游戏账号。</p>
+            <div className="flex items-center gap-2 text-xs text-aether-200">
+              <Link2 size={14} />
+              <span>已连接角色</span>
+            </div>
+            <h3 className="mt-2 text-xl font-semibold">已连接角色展示</h3>
+            <p className="mt-2 text-sm leading-6 text-white/45">管理已绑定的 UID 与角色信息，可按需切换到目标账号。</p>
             <div className="mt-5 flex flex-wrap gap-2">
-              <select value={accountGame} onChange={event => setAccountGame(event.target.value as GameId)} className="rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/70 outline-none">
+              <select
+                value={accountGame}
+                onChange={event => setAccountGame(event.target.value as GameId)}
+                className="rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/70 outline-none"
+              >
                 <option value="genshin">原神</option>
                 <option value="starrail">星穹铁道</option>
               </select>
-              <input value={uid} onChange={event => setUid(event.target.value.replace(/\D/g, ''))} onKeyDown={event => event.key === 'Enter' && void connectAccount()} placeholder="输入游戏 UID" className="min-w-48 flex-1 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm outline-none focus:border-aether-300/45" />
-              <button onClick={() => void connectAccount()} disabled={!uid || Boolean(accountBusy)} className="rounded-xl bg-aether-300 px-4 py-2 text-sm font-semibold text-[#071018] disabled:opacity-40">{accountBusy === 'connect' ? '正在同步…' : '连接账号'}</button>
-              <button onClick={() => { setAccountGame('genshin'); setUid(DEMO_Genshin_UID); }} className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white/55 hover:text-white">使用演示 UID</button>
+              <input
+                value={uid}
+                onChange={event => setUid(event.target.value.replace(/\D/g, ''))}
+                onKeyDown={event => event.key === 'Enter' && void connectAccount()}
+                placeholder="输入角色 UID"
+                className="min-w-48 flex-1 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm outline-none focus:border-aether-300/45"
+              />
+              <button
+                onClick={() => void connectAccount()}
+                disabled={!uid || Boolean(accountBusy)}
+                className="rounded-xl bg-aether-300 px-4 py-2 text-sm font-semibold text-[#071018] disabled:opacity-40"
+              >
+                {accountBusy === 'connect' ? '连接中…' : '连接账号'}
+              </button>
+              <button
+                onClick={() => { setAccountGame('genshin'); setUid(DEMO_Genshin_UID); }}
+                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white/55 hover:text-white"
+              >
+                使用演示 UID
+              </button>
             </div>
-            <p className="mt-3 text-xs leading-5 text-white/35">只读取公开角色展示 不登录 不读取背包 不读取游戏进程</p>
+            <p className="mt-3 text-xs leading-5 text-white/35">示例账号信息仅用于本地流程演示，不会上传到外部服务。</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
-            {accounts.length ? accounts.map(account => (
-              <div key={account.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium">{account.nickname || account.label}</p>
-                    <p className="mt-1 text-xs text-white/35">{account.game === 'genshin' ? '原神' : '星穹铁道'} · UID {account.uid}</p>
+            {accounts.length
+              ? accounts.map(account => (
+                <div key={account.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">{account.nickname || account.label}</p>
+                      <p className="mt-1 text-xs text-white/35">{account.game === 'genshin' ? '原神' : '星穹铁道'} · UID {account.uid}</p>
+                    </div>
+                    <Database size={15} className="text-aether-200" />
                   </div>
-                  <Database size={15} className="text-aether-200" />
+                  <p className="mt-3 text-xs text-white/50">
+                    已绑定角色：{account.characterCount} 位{account.error ? ` · ${account.error}` : ''}
+                  </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      onClick={() => void syncAccount(account.id)}
+                      disabled={Boolean(accountBusy)}
+                      className="text-xs text-aether-200 hover:text-white"
+                    >
+                      {accountBusy === account.id ? '刷新中…' : '刷新角色信息'}
+                    </button>
+                    <button
+                      onClick={() => void removeAccount(account.id)}
+                      disabled={Boolean(accountBusy)}
+                      className="flex items-center gap-1 text-xs text-white/35 hover:text-red-200"
+                    >
+                      <Trash2 size={12} />
+                      删除账号
+                    </button>
+                  </div>
                 </div>
-                <p className="mt-3 text-xs text-white/50">已读取公开角色 {account.characterCount} 个{account.error ? ` · ${account.error}` : ''}</p>
-                <div className="mt-3 flex items-center gap-3">
-                  <button onClick={() => void syncAccount(account.id)} disabled={Boolean(accountBusy)} className="text-xs text-aether-200 hover:text-white">{accountBusy === account.id ? '正在更新…' : '更新角色状态'}</button>
-                  <button onClick={() => void removeAccount(account.id)} disabled={Boolean(accountBusy)} className="flex items-center gap-1 text-xs text-white/35 hover:text-red-200"><Trash2 size={12} />断开</button>
+              ))
+              : (
+                <div className="sm:col-span-2 rounded-2xl border border-dashed border-white/10 p-5 text-sm leading-6 text-white/35">
+                  点击连接 UID 后可同步角色面板数据。
                 </div>
-              </div>
-            )) : (
-              <div className="sm:col-span-2 rounded-2xl border border-dashed border-white/10 p-5 text-sm leading-6 text-white/35">连接 UID 后，以太会把公开角色池与画面一起纳入配队和练度判断。</div>
-            )}
+              )}
           </div>
         </section>
-
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-aether-300/15 bg-aether-300/[0.045] px-6 py-5">
           <div>
             <p className="text-sm font-medium">当前画面来源：{currentSource}</p>
-            <p className="mt-1 text-xs text-white/35">默认读取鼠标所在屏幕。独占全屏或受保护画面可能无法截图，建议使用无边框窗口模式。</p>
+            <p className="mt-1 text-xs text-white/35">
+              点击分析前会尝试读取当前来源并过滤无效窗口；如果当前窗口是以太自身会自动回退到鼠标所在显示器。
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <select
               value={state?.settings.captureMode === 'cursor-display' ? 'cursor-display' : state?.settings.selectedSourceId}
               onChange={event => void chooseSource(event.target.value)}
               className="max-w-64 rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-xs text-white/60 outline-none"
-              title="重新选择画面"
+              title="切换截图来源"
             >
-              <option value="cursor-display">鼠标所在屏幕</option>
-              {sources.map(source => <option key={source.id} value={source.id}>{source.kind === 'window' ? '窗口' : source.kind === 'screen' ? '屏幕' : '内置画面'} · {source.name}</option>)}
+              <option value="cursor-display">鼠标所在显示器</option>
+              {sources.map(source => (
+                <option key={source.id} value={source.id}>
+                  {source.kind === 'window' ? '窗口' : source.kind === 'screen' ? '显示器' : '系统窗口'} · {source.name}
+                </option>
+              ))}
             </select>
-            <button onClick={() => void refresh()} disabled={Boolean(busy)} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/50 hover:text-white disabled:opacity-40"><RefreshCw size={13} />刷新</button>
+            <button
+              onClick={() => void refresh()}
+              disabled={Boolean(busy)}
+              className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/50 hover:text-white disabled:opacity-40"
+            >
+              <RefreshCw size={13} />
+              刷新
+            </button>
           </div>
         </section>
       </main>
     </div>
   );
 };
+
+

@@ -1,71 +1,75 @@
 # 以太 AI 游戏伴侣
 
-> 面向玩家的按需屏幕 Agent。按 `Alt+Q` 后，以太会捕获当前画面，结合会话上下文、玩家偏好、公开账号状态和游戏知识，给出简短、中文、可执行的下一步建议。
+以太是一个本地桌面 AI 游戏伴侣。玩家按 `Alt+Q` 或点击首页按钮后，以太会临时读取当前屏幕画面，结合会话上下文、回答偏好、公开账号信息和攻略来源，生成中文、简短、可执行的下一步建议。
 
-## 预览
+它不是外挂、宏或自动化脚本：不读取游戏进程内存，不抓包，不自动点击或操作游戏客户端，只在玩家主动触发时分析屏幕截图。
 
-| 首页 | AgentOps 后台 |
-| --- | --- |
-| ![首页](docs/assets/home.png) | ![后台](docs/assets/dashboard.png) |
+## 首页
 
-## 项目定位
+![首页](docs/assets/home.png)
 
-以太不是外挂、宏或自动化脚本。它只在用户主动触发时读取屏幕截图，并把识别结果压缩成玩家能直接执行的建议；不读取游戏进程内存，不抓包，不自动点击或操作游戏客户端。
+首页面向玩家使用，核心入口是：
 
-适用场景：
+- `Alt+Q` 或 `看当前画面`：分析当前画面。
+- 场景卡：选择本轮想问的方向，例如装备、配队、剧情或探索；点击后只改变意图，不会立即截图。
+- 回答偏好：调整回答语气和信息密度。
+- 继续追问：在当前会话内接着问，不重新截图，默认复用上一轮画面观察。
+- 最近回答：查看完整回答、参考资料和可执行建议。
 
-- 探索、解谜、地图路线卡点。
-- 队伍、装备、养成路线判断。
-- 剧情人物、任务线索解释，默认防剧透。
-- 游戏之外的桌面、网页或文档画面快速解读。
+## 后台
+
+![后台](docs/assets/dashboard.png)
+
+后台用于复盘和排障，包含：
+
+- 历史会话列表和会话详情联动。
+- 视觉观察、知识来源、Skill、Trace 和错误记录。
+- 历史会话继续追问。
+- 本地会话删除和清空。
+- 运行环境、模型、知识库版本等诊断信息。
 
 ## 核心能力
 
-- **按需截图解读**：`Alt+Q` 默认读取鼠标所在显示器；也可以在主界面手动选择显示器、窗口或内置演示画面。
-- **低打扰短答案卡**：分析完成后弹出短答案卡，默认约 8 秒后自动收起，不抢焦点，不拦截游戏点击。
-- **完整回答与追问**：`Alt+Shift+Q` 打开最近一次完整回答；首页和后台都支持基于同一会话继续追问。
-- **多玩家偏好**：内置“随心玩家、进阶玩家、剧情玩家、新手玩家、收集玩家”等回答偏好，并按会话/账号维护 memory。
-- **公开账号上下文**：玩家可主动连接原神或星铁公开 UID；以太会把公开角色状态作为配队、装备和养成判断的上下文。
-- **本地优先知识链路**：内置知识包 + SQLite FTS + 别名/关键词规则 + 来源权重；本地信息不足时可选 Tavily 联网攻略兜底。
-- **AgentOps 后台**：用于演示和排障，可查看会话、视觉观察、知识命中、Skill、Trace、错误和运行状态。
+- **屏幕理解**：通过 Electron 截图能力读取鼠标所在显示器或指定窗口。
+- **多模态推理**：默认通过本地 Sub2API 网关调用 `gpt-5.5`。
+- **继续追问**：同一会话内保留上下文，追问时复用上一轮画面观察。
+- **搜索优先攻略问答**：装备、配队、机制、任务、活动、探索、成就、剧情回顾等攻略意图优先走联网检索；本地知识库只在高置信命中时直接回答。
+- **知识来源可追溯**：首页显示玩家可读的参考资料，后台显示完整检索链路。
+- **本地历史管理**：会话、run、trace、cache 和 memory 写入本地，后台可删除。
 
 ## 技术结构
 
 ```text
-React / Vite 渲染层
-  ├─ PlayerHome：玩家首页、场景卡、追问与账号入口
-  ├─ AnswerCard：短答案卡
-  └─ Dashboard：AgentOps 后台
+React / Vite
+  - PlayerHome：首页、场景卡、继续追问、最近回答
+  - AnswerCard：短答案卡
+  - Dashboard：后台详情、Trace、Skill、知识来源
 
-Electron 主进程
-  ├─ 全局快捷键、托盘、窗口管理
-  ├─ desktopCapturer 截图与画面源选择
-  ├─ .env / .env.local / 进程环境变量加载
-  └─ IPC API
+Electron
+  - 全局快捷键、托盘、窗口管理
+  - desktopCapturer 截图
+  - IPC 与 preload API
+  - 本地配置加载
 
 Agent Runtime
-  ├─ 视觉/OCR 观察
-  ├─ 会话 memory
-  ├─ 知识检索与来源过滤
-  ├─ 模型推理
-  └─ trace、cache、conversation 持久化
-
-模型网关
-  └─ 默认连接本机 Sub2Api，也可换成任意 OpenAI-compatible endpoint
+  - 视觉特征提取
+  - 会话与 memory
+  - 本地知识库与联网检索
+  - 模型调用、错误记录、trace
 ```
 
 ## 环境要求
 
-- Node.js 22.x 或更新版本。当前实现使用 `node:sqlite`，建议与项目里的 `@types/node` 主版本保持一致。
+- Windows 桌面环境。
+- Node.js 22.x 或更新版本。
 - npm。
-- Windows 桌面环境。当前打包脚本生成 Windows portable 版本；开发模式依赖 Electron，理论上可在其它桌面系统调试，但发布产物以 Windows 为准。
-- Docker Desktop。仅当你用本机 Sub2Api 作为模型网关时需要。
-- 一个可用的视觉模型服务。默认走本机 Sub2Api：`http://127.0.0.1:8080/v1`。
-- Tavily API key 可选。未配置时只使用本地知识与模型能力。
+- Docker Desktop，使用本地 Sub2API 网关时需要。
+- 可用的 OpenAI-compatible 模型服务。默认配置为本机 Sub2API：`http://127.0.0.1:8080/v1`。
+- Tavily API key 可选，用于联网攻略检索兜底。
 
 ## 快速启动
 
-### 1. 克隆项目并安装依赖
+### 1. 安装依赖
 
 ```bash
 git clone https://github.com/Swindyk/Aether_Demo.git
@@ -73,9 +77,9 @@ cd Aether_Demo
 npm install
 ```
 
-### 2. 启动模型网关
+### 2. 启动 Sub2API
 
-如果使用 Sub2Api，请先进入你本机的 Sub2Api 项目目录。不要把下面的 `<SUB2API_DIR>` 当成固定路径；它只是占位符。
+Sub2API 不包含在本仓库内。进入你本机的 Sub2API 项目目录后启动 Docker 服务：
 
 ```bash
 cd <SUB2API_DIR>
@@ -89,62 +93,35 @@ docker compose ps
 Invoke-WebRequest http://127.0.0.1:8080/health -UseBasicParsing
 ```
 
-macOS / Linux 或 Git Bash 可用：
-
-```bash
-curl http://127.0.0.1:8080/health
-```
-
 正常情况下应返回类似：
 
 ```json
 {"status":"ok"}
 ```
 
-如果修改过 Sub2Api 自己的 `.env`，在 Sub2Api 项目目录执行：
+### 3. 配置以太
 
-```bash
-docker compose restart sub2api
-```
-
-### 3. 配置以太运行时
-
-开发环境建议从示例文件复制一份本地配置：
-
-```bash
-cp .env.example .env.local
-```
-
-Windows PowerShell 可用：
+复制本地配置文件：
 
 ```powershell
 Copy-Item .env.example .env.local
 ```
 
-在 `.env.local` 中填写你的模型服务配置：
+在 `.env.local` 中填写项目运行时配置：
 
 ```text
+AETHER_LLM_PROVIDER=Sub2Api
 AETHER_LLM_BASE_URL=http://127.0.0.1:8080/v1
 AETHER_LLM_WIRE=responses
 AETHER_LLM_MODEL=gpt-5.5
 AETHER_LLM_FAST_VISION_MODEL=gpt-5.5
-AETHER_LLM_API_KEY=你的本地 Sub2Api API Key
-# TAVILY_API_KEY=你的 Tavily API Key，可选
+AETHER_LLM_API_KEY=你的本地 Sub2API API Key
+
+# 可选：攻略联网检索
+TAVILY_API_KEY=你的 Tavily API Key
 ```
 
-`.env` 和 `.env.local` 已被 `.gitignore` 忽略，不要提交真实 key。项目仍兼容旧变量名 `AETHER_MODEL_*` 和 `OPENAI_*`，但新配置建议统一使用 `AETHER_LLM_*`。
-
-如果不使用 Sub2Api，可以直接接入其它 OpenAI-compatible 服务：
-
-```text
-AETHER_LLM_PROVIDER=你的服务名
-AETHER_LLM_BASE_URL=https://你的模型服务/v1
-AETHER_LLM_WIRE=responses
-AETHER_LLM_MODEL=固定模型名
-AETHER_LLM_API_KEY=你的服务 API Key
-```
-
-如果服务只兼容 Chat Completions，把 `AETHER_LLM_WIRE` 改成 `chat`；以太会调用 `/v1/chat/completions`。
+不要提交 `.env`、`.env.local` 或任何真实 API key。本项目只读取项目内环境变量，不读取 Codex 的 `.codex/auth.json` 或 `.codex/config.toml`。
 
 ### 4. 启动开发版
 
@@ -152,28 +129,19 @@ AETHER_LLM_API_KEY=你的服务 API Key
 npm run dev
 ```
 
-这个命令会同时启动 Vite 前端和 Electron 桌面应用。应用启动后，可以点击首页“让我看看”，或在任意画面按 `Alt+Q`。
+启动后可点击首页 `看当前画面`，或在目标画面上按 `Alt+Q`。
 
-## 便携版构建与运行
-
-常用构建命令：
+## 构建与打包
 
 ```bash
 npm run build
 npm run pack
-npm run pack:portfolio
 ```
 
-- `npm run pack`：生成本机可运行便携版到 `release/`。如果仓库根目录存在 `.env`，会复制到 `release/`，便于本机演示。
-- `npm run pack:portfolio`：生成脱敏作品集版本到 `release-portfolio/`，不会复制 `.env` 或 `.env.local`。
+- `npm run build`：构建渲染层。
+- `npm run pack`：生成 Windows portable 版本到 `release/`。
 
-运行作品集便携版时，先确保模型网关已启动，再运行生成出的 exe。例如：
-
-```powershell
-.\release-portfolio\<generated-exe-name>.exe
-```
-
-便携版运行时也会尝试读取 exe 同目录、项目目录、当前工作目录、用户数据目录等位置的 `.env` / `.env.local`。给他人演示时，推荐把真实 key 放在 exe 同目录的本地 `.env.local`，不要打包进公开仓库。
+`release/` 已被 `.gitignore` 忽略。打包时可以把本地 `.env` 复制到 release 目录便于本机演示，但不要提交 release 目录或真实密钥。
 
 ## 常用脚本
 
@@ -182,68 +150,77 @@ npm test
 npm run eval:rag
 npm run build
 npm run pack
-npm run pack:portfolio
 ```
-
-脚本说明：
 
 - `npm test`：运行 Electron 侧单元测试。
-- `npm run eval:rag`：运行知识检索评测。
-- `npm run build`：构建 Vite 渲染层并清理渲染产物。
-- `npm run pack`：构建 Windows portable 本机演示包。
-- `npm run pack:portfolio`：构建不含本机密钥的作品集演示包。
+- `npm run eval:rag`：运行知识检索评估。
+- `npm run build`：构建前端产物。
+- `npm run pack`：生成本地便携版。
 
-## 运行链路
+## 配置优先级
+
+模型配置集中在 `electron/model-config.cjs`，建议使用新的 `AETHER_LLM_*` 变量：
+
+1. `AETHER_LLM_*`
+2. 兼容旧变量：`AETHER_MODEL_*`
+3. 兼容 OpenAI 风格变量：`OPENAI_*`
+
+默认推荐：
 
 ```text
-Alt+Q
-→ 隐藏以太窗口并捕获当前画面
-→ 视觉/OCR 观察与场景判断
-→ 读取会话 memory 与公开 UID 上下文
-→ 本地知识检索；必要时使用 Tavily 联网兜底
-→ 模型推理并生成玩家短答案
-→ 短答案卡展示
-→ 保存 conversation、run、trace、cache 与 memory
+AETHER_LLM_PROVIDER=Sub2Api
+AETHER_LLM_BASE_URL=http://127.0.0.1:8080/v1
+AETHER_LLM_WIRE=responses
+AETHER_LLM_MODEL=gpt-5.5
 ```
 
-## 数据与边界
-
-- memory、cache、run、conversation、知识状态和 SQLite 数据保存在 Electron 用户数据目录。
-- 云端模型服务只接收本轮问题、必要上下文和用户主动触发的截图。
-- Tavily 只在配置 key 且知识链路需要联网兜底时使用。
-- 不读取游戏进程内存，不抓包，不绕过游戏客户端限制，不执行自动化游戏操作。
-- 独占全屏或受保护画面可能被系统截成黑屏；录制和演示时建议使用无边框窗口模式。
+如果接入其他 OpenAI-compatible endpoint，替换 `BASE_URL`、`MODEL` 和 `API_KEY` 即可。若服务只支持 Chat Completions，把 `AETHER_LLM_WIRE` 改为 `chat`。
 
 ## 常见问题
 
-### `docker` 命令找不到
+### 为什么配置的是 gpt-5.5，界面显示另一个模型？
 
-先打开 Docker Desktop，等待状态变成 Running。仍然不行时，重新打开终端，并检查 Docker 是否安装、是否加入 PATH。
+以太请求时使用 `AETHER_LLM_MODEL`，后台展示的是模型服务响应里的实际 `model` 字段。如果网关做了模型别名映射，界面会显示网关实际返回的模型名。
 
-### Sub2Api 健康检查正常，但以太无法推理
+### 模型服务鉴权失败怎么办？
 
-优先检查三项：
+检查：
 
-1. `.env.local`、`.env` 或当前进程环境变量里是否有可用的 `AETHER_LLM_API_KEY`。
-2. `AETHER_LLM_BASE_URL` 是否为 `http://127.0.0.1:8080/v1`。
-3. `AETHER_LLM_WIRE` 是否与模型服务兼容；Responses API 用 `responses`，Chat Completions 用 `chat`。
+- Sub2API 是否正在运行。
+- `AETHER_LLM_BASE_URL` 是否是 `http://127.0.0.1:8080/v1`。
+- `.env.local` 或 `.env` 中是否有有效的 `AETHER_LLM_API_KEY`。
+- 不要把模型配置写到 `.codex`，以太不会读取 Codex 配置。
 
-不要把模型地址写成 `http://127.0.0.1:8080/openai/v1`。该地址通常对应网关前端或反代路径，不一定是以太实际调用的模型接口。
+### 截图黑屏或识别不到游戏怎么办？
 
-### 请求模型名和界面显示模型名不一致
+优先使用无边框窗口模式。独占全屏、受保护窗口或系统权限不足时，Electron 可能无法稳定截图。也可以在首页手动选择显示器或窗口来源。
 
-以太发送请求时使用 `AETHER_LLM_MODEL`，但 AgentOps 会展示模型服务响应里的实际 `model` 字段。如果网关把 `gpt-5.5` 映射到其它模型，界面会显示映射后的实际模型名。要固定显示结果，需要在模型网关侧调整模型映射，或改用不会改写模型名的 endpoint。
+### 场景卡为什么点了不开始识别？
 
-### 需要启动 Codex 吗
+这是预期行为。场景卡只是选择问题方向；只有 `Alt+Q` 或 `看当前画面` 才会开始截图和模型调用。
 
-不需要。Codex 是开发工具，以太是 Electron 应用。运行以太只读取项目本地 `.env` / `.env.local` 和当前进程环境变量，不读取 Codex 的 `config.toml` 或 `auth.json`，也不要把 Sub2Api key 写入 Codex 配置。
+### 继续追问会重新截图吗？
 
-### 截图是黑屏或识别不到游戏
+默认不会。追问会复用当前会话的上一轮视觉观察和知识命中，适合接着问“怎么打”“换成保守方案”“机制是什么”等问题。
 
-优先把游戏切换为无边框窗口模式，再在首页手动选择“整个屏幕”或目标窗口。部分独占全屏、受保护画面或系统权限不足场景无法稳定被 Electron 截取。
-
-## 文档
+## 操作文档
 
 - [首页操作手册](docs/operation-home.md)
-- [AgentOps 后台操作手册](docs/operation-dashboard.md)
-- [产品方案 PDF](./“以太”AI游戏伴侣产品方案.pdf)
+- [后台操作手册](docs/operation-dashboard.md)
+
+## 提交前检查
+
+提交前建议运行：
+
+```powershell
+git status --short
+git diff --cached --name-only
+Select-String -Path (git ls-files) -Pattern 'ms-[0-9a-f-]{10,}|tvly-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{20,}' -ErrorAction SilentlyContinue
+```
+
+确认事项：
+
+- 不提交 `.env`、`.env.local`、`.env.bak-*`。
+- 不提交 `release/`、`release-*`。
+- 不提交真实 API key。
+- 不提交产品方案 PDF。

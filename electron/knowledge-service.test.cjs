@@ -83,7 +83,7 @@ test('导入知识包会立即写入 SQLite 检索层', () => {
   assert.equal(service.searchLocal('测试配队', 'genshin', 'roster')[0].version, '测试版本');
 });
 
-test('本地知识充足时不会调用 Tavily', async () => {
+test('攻略类本地弱命中仍会联网，web 空时不保留泛来源', async () => {
   let calls = 0;
   const service = createService({
     dbFile: path.join(root, 'local.sqlite'),
@@ -98,8 +98,11 @@ test('本地知识充足时不会调用 Tavily', async () => {
     },
   });
   const result = await service.retrieve({ query: '配队基础', game: 'genshin', scene: 'roster' });
-  assert.equal(result.hits.length, 2);
-  assert.equal(calls, 0);
+  assert.equal(result.webTriggered, true);
+  assert.equal(result.webUsed, false);
+  assert.equal(result.matchMode, 'low-match-web-empty');
+  assert.equal(result.hits.length, 0);
+  assert.ok(calls >= 1);
 });
 
 test('Tavily 检索会过滤搜索页并保留可追溯来源', async () => {

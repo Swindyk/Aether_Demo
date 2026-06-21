@@ -94,24 +94,24 @@ const BLOCKED_SOURCE_PATTERNS = [
   /\/search[/?#]/i,
 ];
 
-const GUIDE_KEYWORDS = ['配队', '养成', '毕业面板', '面板', '攻略', 'build', 'team', 'guide', 'teams', 'stats'];
+const GUIDE_KEYWORDS = ['配队', '养成', '毕业面板', '面板', '攻略', '任务', '章节', '剧情', '进度', '机制', '打法', '路线', '奖励', '成就', '深渊', '混沌', 'build', 'team', 'guide', 'teams', 'stats'];
 const LOCAL_HIT_SCORE_GATE = 9;
 const LOCAL_HIT_ACCEPT_SCORE = 5;
 const LOCAL_HIT_MIN_COUNT = 2;
 const LOCAL_EXACT_QA_SCORE_GATE = 22;
-const WEB_TRIGGER_REGEX = /(search|latest|update|announcement|patch|version|build|release|上新|最新|更新|版本|攻略|查一下|看看|搜一下|官方|公告|机制|打法|机械|首领|BOSS|Boss|boss|技能|技能点|配队|队伍|天赋|旋转|循环|输出|伤害|攻略)/i;
-const WEB_SEARCH_INTENT_REGEX = /(我想|我需要|请帮|帮我|帮我找|帮我查|想知道|怎么打|如何打|机制|打法|配队|队伍|输出|伤害|首领|b站|youtube|视频|wiki|攻略|给我查|查一查|搜一搜|观测枢|米游社|攻略入口|版本变化|最新|更新|资讯)/i;
+const WEB_TRIGGER_REGEX = /(search|latest|update|announcement|patch|version|build|release|上新|最新|更新|版本|攻略|查一下|看看|搜一下|搜不到|关键词|联网|官方|公告|机制|打法|机械|首领|BOSS|Boss|boss|技能|技能点|配队|队伍|阵容|天赋|旋转|循环|输出|伤害|任务|章节|进度|剩余|多久|路线|解谜|位置|奖励|成就|深渊|螺旋|混沌|虚构|末日|攻略)/i;
+const WEB_SEARCH_INTENT_REGEX = /(我想|我需要|请帮|帮我|帮我找|帮我查|想知道|怎么打|如何打|怎么配|怎么走|在哪|哪里|机制|打法|配队|队伍|阵容|输出|伤害|首领|b站|youtube|视频|wiki|攻略|给我查|查一查|搜一搜|网上搜|搜不到|关键词|观测枢|米游社|攻略入口|版本变化|最新|更新|资讯|推荐队伍|推荐阵容)/i;
 const GUIDE_INTENT_PATTERNS = [
-  ['version_update', /最新|更新|版本|改动|公告|资讯|上线|复刻|patch|version|update/i],
-  ['event', /活动|限时|奖励|原石|试炼|挑战|玩法|event/i],
-  ['mechanic', /机制|打法|怎么打|如何打|boss|BOSS|首领|怪物|敌人|抗性|弱点|破盾|锁血|免伤|虚弱|瘫痪|技能|mechanic/i],
   ['abyss/endgame', /深渊|螺旋|第\d+层|混沌|忘却之庭|虚构叙事|末日幻影|末日|剧诗|幻想真境|endgame/i],
-  ['team', /配队|阵容|队伍|组队|循环|轴|出伤|team|composition|rotation/i],
+  ['mechanic', /机制|打法|怎么打|如何打|boss|BOSS|首领|怪物|敌人|抗性|弱点|破盾|锁血|免伤|虚弱|瘫痪|技能|mechanic/i],
   ['build', /装备|武器|圣遗物|遗器|光锥|词条|面板|毕业|养成|天赋|命座|星魂|技能点|build|stats/i],
+  ['team', /配队|阵容|队伍|组队|循环|轴|出伤|team|composition|rotation/i],
   ['exploration', /探索|解谜|宝箱|路线|地图|传送点|锚点|神瞳|战利品|怎么上去|怎么进去|开门|机关|puzzle|map/i],
   ['achievement', /成就|隐藏成就|奖杯|achievement/i],
   ['story_recap', /剧情回顾|剧情讲到|讲到哪|前情|回顾|人物关系|防剧透|story recap/i],
   ['quest', /任务|委托|世界任务|魔神任务|传说任务|开拓任务|同行任务|冒险任务|quest/i],
+  ['event', /活动|限时|奖励|原石|试炼|挑战|玩法|event/i],
+  ['version_update', /最新|更新|版本|改动|公告|资讯|上线|复刻|patch|version|update/i],
   ['general_guide', /攻略|怎么|如何|要不要|能不能|卡点|不会|求解|推荐|guide/i],
 ];
 const SEARCH_FALLBACK_SITES = {
@@ -204,6 +204,34 @@ const compactText = (value, limit = 1200) => repairMojibake(value)
   .trim()
   .slice(0, limit);
 
+const addUnique = (items, value, limit = 64) => {
+  const text = compactText(value, limit).replace(/^[+：:，,。；;、\s]+|[+：:，,。；;、\s]+$/g, '');
+  if (text && !items.includes(text)) items.push(text);
+};
+
+const extractSearchEntities = (query, context = {}) => {
+  const entities = [];
+  const text = [
+    query,
+    context.summary,
+    ...(Array.isArray(context.facts) ? context.facts : []),
+    ...(Array.isArray(context.ocrText) ? context.ocrText : []),
+  ].filter(Boolean).join(' ');
+  for (const match of text.matchAll(/[“"「『']([^”"」』']{2,40})[”"」』']/g)) {
+    addUnique(entities, match[1], 48);
+  }
+  for (const match of text.matchAll(/(?:当前)?(?:任务|目标|提示|行动目标|剧情目标)[为是：:]*\s*([^，。；;、\n]{2,32})/g)) {
+    addUnique(entities, match[1], 48);
+  }
+  for (const match of text.matchAll(/(?:前往|寻找|调查|进入|击败|完成|收集|返回|到达|跟随|打开)[^，。；;、\n]{1,30}/g)) {
+    addUnique(entities, match[0], 48);
+  }
+  if (/章节|剧情|任务|进度|结束|后续|剩余|多久/.test(text)) {
+    addUnique(entities, '任务 章节 剧情进度 剩余时长', 64);
+  }
+  return entities.slice(0, 6);
+};
+
 const domainOf = value => {
   try {
     return new URL(value).hostname.replace(/^www\./, '');
@@ -285,6 +313,12 @@ const classifyGuideIntent = (query, scene = 'unknown', context = {}) => {
     ...(Array.isArray(context.ocrText) ? context.ocrText : []),
   ].filter(Boolean).join(' ');
   if (!text.trim()) return '';
+  if (
+    (scene === 'story' || /剧情|章节|任务|魔神任务|世界任务|传说任务|前往|进度|结束|后续|剩余|多久/.test(text))
+    && /剧情|章节|任务|前往|进度|结束|后续|剩余|多久/.test(text)
+  ) {
+    return /人物关系|前情|回顾|防剧透|讲到哪/.test(text) ? 'story_recap' : 'quest';
+  }
   for (const [intent, pattern] of GUIDE_INTENT_PATTERNS) {
     if (pattern.test(text)) return intent;
   }
@@ -295,6 +329,33 @@ const classifyGuideIntent = (query, scene = 'unknown', context = {}) => {
   if (scene === 'event') return 'event';
   if (classifyWebNeed(query).required) return 'general_guide';
   return '';
+};
+
+const detectGuideFacets = (query, scene = 'unknown', guideIntent = '', context = {}) => {
+  const text = [
+    query,
+    scene,
+    guideIntent,
+    context.summary,
+    ...(Array.isArray(context.facts) ? context.facts : []),
+    ...(Array.isArray(context.ocrText) ? context.ocrText : []),
+  ].filter(Boolean).join(' ');
+  const facets = [];
+  const add = value => {
+    if (value && !facets.includes(value)) facets.push(value);
+  };
+  if (guideIntent === 'abyss/endgame' || /深渊|螺旋|第\d+层|上半|下半|混沌|忘却之庭|虚构|末日|剧诗|终局/.test(text)) add('endgame');
+  if (guideIntent === 'mechanic' || /机制|打法|怎么打|如何打|抗性|弱点|破盾|锁血|免伤|虚弱|瘫痪|技能|boss|BOSS|首领|敌人|怪物/.test(text)) add('mechanic');
+  if (guideIntent === 'team' || /配队|阵容|队伍|组队|推荐队|上半.*下半|循环|轴|出伤|反应/.test(text)) add('team');
+  if (guideIntent === 'build' || /装备|武器|圣遗物|遗器|光锥|词条|面板|毕业|养成|天赋|命座|星魂|技能点/.test(text)) add('build');
+  if (guideIntent === 'quest' || /任务|魔神任务|世界任务|传说任务|开拓任务|同行任务|章节|进度|前往|剩余|多久|后续|结束/.test(text)) add('quest');
+  if (guideIntent === 'exploration' || /探索|解谜|路线|地图|位置|在哪|哪里|怎么上去|怎么进去|开门|机关|宝箱|神瞳|锚点/.test(text)) add('exploration');
+  if (guideIntent === 'event' || /活动|限时|奖励|原石|玩法|试炼|挑战/.test(text)) add('event');
+  if (guideIntent === 'achievement' || /成就|隐藏成就|奖杯/.test(text)) add('achievement');
+  if (guideIntent === 'story_recap' || /剧情回顾|前情|人物关系|防剧透|讲到哪/.test(text)) add('story');
+  if (guideIntent === 'version_update' || /最新|更新|版本|公告|改动|上线|复刻/.test(text)) add('version');
+  if (!facets.length && guideIntent) add(guideIntent);
+  return facets;
 };
 
 const compactEntityKey = value => String(value || '')
@@ -1039,22 +1100,30 @@ class AetherKnowledgeService {
     const selected = normalizeCharacterName(context.selectedCharacter || '');
     const aliases = characterAliases(selected);
     const guideIntent = context.guideIntent || classifyGuideIntent(query, scene, context);
+    const guideFacets = detectGuideFacets(query, scene, guideIntent, context);
     const gameLabel = GAME_LABELS[game] || '';
-    const entityText = [
+    const extractedEntities = extractSearchEntities(query, context);
+    const conciseQuery = compactText(query, 96);
+    const focusedEntity = [
       selected,
-      ...(Array.isArray(context.visibleRoster) ? context.visibleRoster.slice(0, 4) : []),
+      ...extractedEntities,
+      ...(Array.isArray(context.visibleRoster) ? context.visibleRoster.slice(0, 2) : []),
+    ].filter(Boolean).join(' ');
+    const entityText = [
+      focusedEntity,
       compactText(context.summary || '', 80),
       ...(Array.isArray(context.facts) ? context.facts.slice(0, 2) : []),
-      query,
     ].filter(Boolean).join(' ');
     const wikiPath = game === 'genshin' ? 'wiki.biligame.com/ys' : game === 'starrail' ? 'wiki.biligame.com/sr' : 'wiki.biligame.com';
     const base = [
-      `${gameLabel} ${query}`.trim(),
-      englishQuery(query, game, scene),
+      `${gameLabel} ${focusedEntity || conciseQuery}`.trim(),
+      `${gameLabel} ${focusedEntity || conciseQuery} 攻略`.trim(),
+      englishQuery(focusedEntity || conciseQuery, game, scene),
       `${gameLabel} ${entityText} 攻略`.trim(),
       `site:${wikiPath} ${gameLabel} ${entityText}`.trim(),
       `site:miyoushe.com ${gameLabel} ${entityText}`.trim(),
     ];
+    const priority = [];
     if (
       aliases.length
       && (scene === 'gear'
@@ -1065,8 +1134,8 @@ class AetherKnowledgeService {
       base.push(`${aliases.find(item => /^[A-Za-z]/.test(item)) || aliases[0]} build teams KQM`);
     }
     if (/机制|打法|boss|首领|技能|输出|伤害|旋转|循环|如何打|怎么打|mechanic|rotation|bosses/i.test(query)) {
-      base.push(`${gameLabel} ${query} 机制 攻略`);
-      base.push(`${englishQuery(query, game, scene)} boss guide`);
+      priority.push(`${gameLabel} ${query} 机制 攻略`);
+      priority.push(`${englishQuery(query, game, scene)} boss guide`);
     }
     const intentSuffix = {
       build: '装备 养成 毕业 面板 词条',
@@ -1082,10 +1151,28 @@ class AetherKnowledgeService {
       general_guide: '攻略 指南',
     }[guideIntent];
     if (intentSuffix) {
-      base.push(`${gameLabel} ${entityText} ${intentSuffix}`.trim());
-      base.push(`site:${wikiPath} ${entityText} ${intentSuffix}`.trim());
+      priority.push(`${gameLabel} ${entityText} ${intentSuffix}`.trim());
+      priority.push(`site:${wikiPath} ${entityText} ${intentSuffix}`.trim());
     }
-    return [...new Set(base.filter(Boolean))];
+    const facetSuffixes = {
+      endgame: ['深渊 12层 上半 下半 敌人 阵容 推荐队伍', '深渊 敌人机制 队伍推荐 打法'],
+      mechanic: ['机制 打法 抗性 弱点 技能 破盾 锁血 虚弱窗口', 'boss 机制 攻略 怎么打'],
+      team: ['配队 阵容 推荐队伍 循环 输出轴', '上半 下半 队伍 推荐 阵容'],
+      build: ['装备 武器 圣遗物 遗器 词条 毕业面板 养成', 'build stats teams guide'],
+      quest: ['任务流程 章节 剧情进度 剩余任务 剩余时长', '任务链 流程 攻略'],
+      exploration: ['探索 路线 解谜 位置 宝箱 机关', '怎么走 地图 路线 攻略'],
+      event: ['活动攻略 奖励 玩法 挑战 队伍', '活动 机制 奖励 攻略'],
+      achievement: ['隐藏成就 触发条件 完成方法', '成就 攻略'],
+      story: ['剧情回顾 人物关系 防剧透 当前进度', '剧情 任务链 回顾'],
+      version: ['最新版本 更新 公告 改动 攻略', '版本更新 机制变化'],
+    };
+    for (const facet of guideFacets.slice(0, 4)) {
+      for (const suffix of facetSuffixes[facet] || []) {
+        priority.push(`${gameLabel} ${focusedEntity || entityText || conciseQuery} ${suffix}`.trim());
+        priority.push(`site:${wikiPath} ${focusedEntity || entityText || conciseQuery} ${suffix}`.trim());
+      }
+    }
+    return [...new Set([...priority, ...base].filter(Boolean))];
   }
 
   sourceRelevance(result, context = {}, options = {}) {
@@ -1361,8 +1448,11 @@ class AetherKnowledgeService {
     const accountContext = this.getAccountContext(game, context.visibleRoster);
     const explicitWeb = classifyWebNeed(input.query);
     const requireFreshWeb = explicitWeb.required;
+    const plannedWebQueries = guideIntent || explicitWeb.required
+      ? this.guideQueries(searchQuery, game, input.scene, { ...context, guideIntent })
+      : [];
     const canSearchWeb = input.allowWeb !== false && Boolean(this.tavilyKey);
-    const needsFreshWeb = Boolean(canSearchWeb && guideIntent && !exactLocal && !hasHighLocalMatch);
+    const needsFreshWeb = Boolean(canSearchWeb && !exactLocal && (guideIntent || explicitWeb.required));
     const webSearchUnavailable = Boolean(guideIntent && !exactLocal && !canSearchWeb && input.allowWeb !== false);
     let web = { hits: [], citations: [], filteredSources: [], tavilyRequestIds: [], fromCache: false, webQueries: [], extractedUrls: [] };
     if (needsFreshWeb) {
@@ -1399,7 +1489,7 @@ class AetherKnowledgeService {
       ? `本地检索置信度偏低 (count=${localMatchCount}, top=${localTopScore})，先看联网/缓存策略`
         : '本地检索可信，先使用本地知识。';
 
-    const retainedLocalHits = strongLocalHits.length && (exactLocal || webUsed || !guideIntent || hasHighLocalMatch)
+    const retainedLocalHits = strongLocalHits.length && (exactLocal || webUsed || (!guideIntent && hasHighLocalMatch))
       ? strongLocalHits
       : [];
     const retainedLocalCount = retainedLocalHits.length;
@@ -1450,7 +1540,7 @@ class AetherKnowledgeService {
       guideIntent,
       retrievalPolicy,
       localExactQaMatch: exactLocal,
-      webQueries: web.webQueries || [],
+      webQueries: web.webQueries?.length ? web.webQueries : plannedWebQueries,
       extractedUrls: web.extractedUrls || [],
       fromCache: web.fromCache,
       accountContext,

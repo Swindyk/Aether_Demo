@@ -394,6 +394,161 @@ const normalizeTeamSuggestions = value => {
   }).filter(item => item && (item.reason || item.members.length)).slice(0, 2);
 };
 
+const GUIDE_ANSWER_INTENTS = new Set([
+  'mechanic',
+  'quest',
+  'event',
+  'exploration',
+  'achievement',
+  'story_recap',
+  'version_update',
+  'abyss/endgame',
+  'general_guide',
+]);
+
+const normalizeSectionItems = value => {
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (typeof item === 'string') return item.trim();
+      if (!item || typeof item !== 'object') return '';
+      return String(item.text || item.detail || item.content || item.reason || item.summary || '').trim();
+    }).filter(Boolean).slice(0, 5);
+  }
+  if (typeof value === 'string') return splitUsefulLines(value).slice(0, 5);
+  return [];
+};
+
+const normalizeAnswerSections = raw => {
+  const rawSections = Array.isArray(raw.sections) ? raw.sections : [];
+  const sections = rawSections.map((item, index) => {
+    if (typeof item === 'string') {
+      return { title: `要点 ${index + 1}`, items: normalizeSectionItems(item) };
+    }
+    if (!item || typeof item !== 'object') return undefined;
+    const title = String(item.title || item.name || `要点 ${index + 1}`).trim();
+    const items = normalizeSectionItems(item.items || item.points || item.children || item.text || item.detail);
+    return title && items.length ? { title, items } : undefined;
+  }).filter(Boolean).slice(0, 5);
+
+  const aliases = [
+    ['可确认信息', raw.confirmed || raw.visibleFacts || raw.facts],
+    ['合理推断', raw.inferences || raw.inference || raw.deductions],
+    ['机制要点', raw.mechanics || raw.mechanicPoints],
+    ['打法步骤', raw.playSteps || raw.steps || raw.howToPlay],
+    ['队伍与反应建议', raw.teamAdvice || raw.reactionAdvice],
+    ['下一步', raw.nextSteps || raw.actions || raw.buildAdvice],
+  ];
+  for (const [title, value] of aliases) {
+    if (sections.length >= 5) break;
+    if (sections.some(section => section.title === title)) continue;
+    const items = normalizeSectionItems(value);
+    if (items.length) sections.push({ title, items });
+  }
+  return sections;
+};
+
+const answerFacetLabels = {
+  endgame: {
+    title: '深渊/终局规划',
+    sections: ['敌人和上下半', '关键机制', '推荐队伍', '打法步骤'],
+    requirement: '必须区分上半/下半或不同波次；如果截图未显示队伍，也要给“可用角色前提下的推荐队伍”。',
+  },
+  mechanic: {
+    title: '机制打法',
+    sections: ['机制要点', '危险点', '输出窗口', '打法步骤'],
+    requirement: '必须写清 Boss/敌人的机制、触发条件、应对动作和不能确认的部分。',
+  },
+  team: {
+    title: '配队建议',
+    sections: ['当前队伍判断', '推荐队伍', '循环与生存风险'],
+    requirement: '必须说明为什么这队能打或不能打；队伍成员不能从截图确认时要标注为候选。',
+  },
+  build: {
+    title: '养成装备',
+    sections: ['当前装备判断', '替换优先级', '词条/面板目标'],
+    requirement: '必须给替换优先级和判断依据，不要只说“看词条”。',
+  },
+  quest: {
+    title: '任务进度',
+    sections: ['可确认信息', '合理推断', '剩余流程', '下一步'],
+    requirement: '必须用任务目标、任务名、章节或任务链来源推断进度；无法精确时给范围和不确定点。',
+  },
+  exploration: {
+    title: '探索路线',
+    sections: ['可见线索', '路线/操作步骤', '容易卡住的位置'],
+    requirement: '必须给从当前位置出发的操作步骤；无法定位时说明需要哪张补充截图。',
+  },
+  event: {
+    title: '活动攻略',
+    sections: ['活动目标', '奖励/规则', '通关策略'],
+    requirement: '必须说明玩法规则、奖励或挑战目标，以及一套可执行策略。',
+  },
+  achievement: {
+    title: '成就攻略',
+    sections: ['触发条件', '完成步骤', '注意事项'],
+    requirement: '必须写触发条件和完成步骤。',
+  },
+  story: {
+    title: '剧情回顾',
+    sections: ['当前剧情位置', '人物关系', '防剧透说明'],
+    requirement: '只能解释当前进度以内信息，不能主动展开后续剧情。',
+  },
+  version: {
+    title: '版本更新',
+    sections: ['更新内容', '影响判断', '玩家下一步'],
+    requirement: '必须区分已确认版本信息和基于版本变化的建议。',
+  },
+};
+
+const detectAnswerFacets = (input = {}, observation = {}, retrievalMeta = {}) => {
+  const text = [
+    input.query,
+    input.scene,
+    retrievalMeta.guideIntent,
+    observation.summary,
+    ...(Array.isArray(observation.facts) ? observation.facts : []),
+    ...(Array.isArray(observation.ocrText) ? observation.ocrText : []),
+  ].filter(Boolean).join(' ');
+  const facets = [];
+  const add = value => {
+    if (value && !facets.includes(value)) facets.push(value);
+  };
+  if (retrievalMeta.guideIntent === 'abyss/endgame' || /深渊|螺旋|第\d+层|上半|下半|混沌|忘却之庭|虚构|末日|剧诗|终局/.test(text)) add('endgame');
+  if (retrievalMeta.guideIntent === 'mechanic' || /机制|打法|怎么打|如何打|boss|BOSS|首领|敌人|怪物|抗性|弱点|破盾|锁血|免伤|虚弱|瘫痪|技能/.test(text)) add('mechanic');
+  if (retrievalMeta.guideIntent === 'team' || /配队|阵容|队伍|组队|推荐队|上半.*下半|循环|输出轴|反应|能不能打/.test(text)) add('team');
+  if (retrievalMeta.guideIntent === 'build' || /装备|武器|圣遗物|遗器|光锥|词条|面板|毕业|养成|天赋|命座|星魂/.test(text)) add('build');
+  if (retrievalMeta.guideIntent === 'quest' || /任务|魔神任务|世界任务|传说任务|开拓任务|同行任务|章节|进度|前往|剩余|多久|后续|结束/.test(text)) add('quest');
+  if (retrievalMeta.guideIntent === 'exploration' || /探索|解谜|路线|地图|位置|在哪|哪里|怎么上去|怎么进去|开门|机关|宝箱|神瞳|锚点/.test(text)) add('exploration');
+  if (retrievalMeta.guideIntent === 'event' || /活动|限时|奖励|原石|玩法|试炼|挑战/.test(text)) add('event');
+  if (retrievalMeta.guideIntent === 'achievement' || /成就|隐藏成就|奖杯/.test(text)) add('achievement');
+  if (retrievalMeta.guideIntent === 'story_recap' || /剧情回顾|前情|人物关系|防剧透|讲到哪/.test(text)) add('story');
+  if (retrievalMeta.guideIntent === 'version_update' || /最新|更新|版本|公告|改动|上线|复刻/.test(text)) add('version');
+  if (!facets.length && retrievalMeta.guideIntent) add('mechanic');
+  return facets.slice(0, 5);
+};
+
+const buildAnswerPlan = (input = {}, observation = {}, retrievalMeta = {}) => {
+  const guideIntent = retrievalMeta.guideIntent || '';
+  const facets = detectAnswerFacets(input, observation, retrievalMeta);
+  const requiredSections = [];
+  const requirements = [];
+  for (const facet of facets) {
+    const config = answerFacetLabels[facet];
+    if (!config) continue;
+    config.sections.forEach(section => {
+      if (!requiredSections.includes(section)) requiredSections.push(section);
+    });
+    requirements.push(`${config.title}：${config.requirement}`);
+  }
+  return {
+    answerKind: GUIDE_ANSWER_INTENTS.has(guideIntent) || facets.length ? 'guide' : 'team',
+    guideIntent,
+    facets,
+    requiredSections: requiredSections.slice(0, 8),
+    requirements: requirements.slice(0, 5),
+  };
+};
+
 const formatPlayerAnswer = playerAnswer => [
   `结论：${playerAnswer.conclusion}`,
   `当前队伍：${playerAnswer.currentTeam}`,
@@ -404,11 +559,33 @@ const formatPlayerAnswer = playerAnswer => [
   `依据：${playerAnswer.basis}`,
 ].filter(Boolean).join('\n');
 
-const normalizePlayerAnswer = (parsed, observation, citations = [], accountContext = {}) => {
+const formatGuideAnswer = playerAnswer => [
+  `结论：${playerAnswer.conclusion}`,
+  ...playerAnswer.sections.map(section => `${section.title}：\n${section.items.map(item => `· ${item}`).join('\n')}`),
+  `依据：${playerAnswer.basis}`,
+].filter(Boolean).join('\n');
+
+const guideFallbackSections = (raw, observation, parsed, answerPlan = {}) => {
+  const sections = normalizeAnswerSections(raw);
+  if (sections.length) return sections;
+  const facts = normalizeSectionItems(observation.facts);
+  const actions = normalizeSectionItems(raw.buildAdvice || raw.actions || parsed.actions);
+  const fallback = [];
+  if (facts.length) fallback.push({ title: '可确认信息', items: facts.slice(0, 4) });
+  if (actions.length) fallback.push({ title: '下一步', items: actions.slice(0, 3) });
+  if (!fallback.length && Array.isArray(answerPlan.requiredSections) && answerPlan.requiredSections.length) {
+    fallback.push({ title: answerPlan.requiredSections[0], items: ['当前信息不足，无法可靠展开这一项；需要补充更清晰的任务名、敌人名或目标界面。'] });
+  }
+  return fallback;
+};
+
+const normalizePlayerAnswer = (parsed, observation, citations = [], accountContext = {}, retrievalMeta = {}, answerPlan = {}) => {
   const sourceNames = citations.map(item => item.author || item.title).filter(Boolean).slice(0, 3);
   const raw = parsed.playerAnswer && typeof parsed.playerAnswer === 'object' ? parsed.playerAnswer : parsed;
   const betterTeams = normalizeTeamSuggestions(raw.betterTeams);
   const buildAdvice = normalizeStringArray(raw.buildAdvice || raw.actions || parsed.actions).slice(0, 3);
+  const guideIntent = retrievalMeta?.guideIntent || '';
+  const answerKind = answerPlan.answerKind || (GUIDE_ANSWER_INTENTS.has(guideIntent) ? 'guide' : 'team');
   const selected = observation.selectedCharacter || observation.summary || '当前角色';
   const teamNames = observation.activeTeamCandidates?.length
     ? observation.activeTeamCandidates.join('、')
@@ -421,7 +598,24 @@ const normalizePlayerAnswer = (parsed, observation, citations = [], accountConte
       : '当前截图没有稳定识别到完整队伍，只能先按角色池给建议。');
   const basis = firstUsefulText(raw.basis, raw.sourcesUsed, sourceNames.join('、'))
     || (sourceNames.length ? `参考 ${sourceNames.join('、')}` : accountContext.account ? '基于截图和公开账号角色判断' : '基于截图和本地知识判断');
+  if (answerKind === 'guide') {
+    const sections = guideFallbackSections(raw, observation, parsed, answerPlan);
+    const guideAnswer = {
+      answerKind,
+      conclusion,
+      currentTeam,
+      betterTeams,
+      buildAdvice,
+      basis,
+      sourcesUsed: normalizeStringArray(raw.sourcesUsed).concat(sourceNames).filter((item, index, all) => item && all.indexOf(item) === index).slice(0, 3),
+      sections,
+      text: '',
+    };
+    guideAnswer.text = formatGuideAnswer(guideAnswer);
+    return guideAnswer;
+  }
   const playerAnswer = {
+    answerKind,
     conclusion,
     currentTeam,
     betterTeams,
@@ -967,7 +1161,7 @@ class AetherAgentRuntime {
     ]);
     if (visual || reuseObservation || observation?.summary) selected.set('observe.visual_context', visual ? '截图需要视觉提取特征' : '复用会话中的上一轮视觉观察');
     if (input.conversationId || reuseObservation) selected.set('context.conversation_memory', '当前问题属于已有会话追问');
-    if (canUseKnowledgeSkills && (/装备|圣遗物|遗器|词条|双爆|阵容|配队|剧情|NPC|探索|地图|机制|名词|为什么|怎么/.test(query) || visual)) {
+    if (canUseKnowledgeSkills && (webDemand || /装备|圣遗物|遗器|词条|双爆|阵容|配队|剧情|章节|任务|进度|剩余|多久|NPC|探索|地图|机制|名词|为什么|怎么|如何|攻略|搜索|搜|查/.test(query) || visual)) {
       selected.set('knowledge.hybrid_rag', '游戏场景需要结合本地知识库和精选攻略知识');
     }
     if (canUseKnowledgeSkills && input.mode !== 'background' && input.analysisMode !== 'instant') {
@@ -1088,6 +1282,7 @@ class AetherAgentRuntime {
     const siteHints = Array.isArray(searchHints.siteHints) ? searchHints.siteHints : [];
     const hasSearchHints = queryHints.length > 0 || siteHints.length > 0;
     const isGuideQuestion = Boolean(guideIntent);
+    const answerPlan = buildAnswerPlan(input, fastObservation || {}, retrievalMeta);
     const knowledgeText = knowledge.length
       ? knowledge.map(item => `【${item.game}·${item.title}】${item.sourceUrl ? `来源：${item.sourceUrl}。` : ''}${item.content}`).join(`\n`)
       : gameContext ? '本地知识未命中，请仅依据画面给建议。' : '当前不是游戏场景，建议先切换到游戏后再识别。';
@@ -1144,10 +1339,12 @@ class AetherAgentRuntime {
       buildAdvice: ['最多三条养成或操作建议'],
       sourcesUsed: ['采用的来源名，没有则留空'],
       playerAnswer: {
+        answerKind: 'team 或 guide',
         conclusion: '一句话结论',
         currentTeam: '当前队伍判断',
         betterTeams: [{ title: '方案名', members: ['角色1', '角色2', '角色3', '角色4'], reason: '原因' }],
         buildAdvice: ['建议'],
+        sections: [{ title: '可确认信息、合理推断、机制要点、打法步骤、队伍与反应建议、下一步等', items: ['具体条目'] }],
         basis: '依据',
         sourcesUsed: ['来源名'],
       },
@@ -1173,12 +1370,27 @@ class AetherAgentRuntime {
       '你可以理解游戏、网页、文档、聊天、系统界面和普通桌面。只有确认是游戏画面时才能使用游戏知识、公开游戏账号和攻略来源。',
       '剧情请求必须防剧透；自动化、读内存、抓包请求必须拒绝并改为手动建议。',
       '回答短、明确、可执行。不要输出 Markdown 代码块。',
+      '复杂玩家问题要先解决用户真正问的事：先拆出玩家问的每个子问题，再逐项回答。例如机制是什么、怎么打、还剩多久、能否推断进度，都必须有对应条目。',
+      '攻略、任务、机制、探索、活动、深渊类问题的 playerAnswer.answerKind 必须为 guide，并填写 playerAnswer.sections。每个 section 的条目必须包含具体名词、机制、步骤、队伍或证据，不要写“先确认机制”“去搜索资料”这类空话。',
+      '复杂问题推荐 sections：可确认信息、合理推断、机制要点、打法步骤、队伍与反应建议、下一步。用不到的可以省略，但至少给 2 个 section。',
+      answerPlan.answerKind === 'guide'
+        ? `本轮答案计划：${JSON.stringify(answerPlan)}。playerAnswer.sections 必须优先覆盖 requiredSections；如果某项资料不足，必须在该项里写“不确定点 + 下一步补证”，不能直接省略。`
+        : '',
+      answerPlan.answerKind === 'guide'
+        ? '每个 section 条目要满足“对象/目标 + 判断/动作 + 依据/原因”。禁止只写“建议先确认”“具体看机制”“根据情况调整”这类没有信息量的句子。'
+        : '',
       '回答直接面向玩家，不要提及模型名称、参数规模、request、runtime、Demo 或内部技术实现。',
       '如果截图是原神角色属性或角色池面板，必须识别当前角色、左侧可见角色和左侧前四位队伍候选。前四位不能确定为真实上阵时，必须写“从当前排序看……像是你正在看的队伍候选”。',
       '玩家答案必须按结论、当前队伍、更优选择、依据组织。不要输出模型推理过程、候选答案集合或重试信息。',
       '在游戏场景中，公开账号状态的可信度高于截图推测；外部攻略只能作为建议依据，不能伪装成确定事实。',
       retrievalPolicy === 'web-first' && knowledge.length
         ? '本轮已经拿到联网攻略来源。必须直接回答打法、路线、配队、装备或机制等攻略问题，并在 sourcesUsed 中写采用来源名；禁止回答“去搜索”“把机制截图发来”。'
+        : '',
+      retrievalPolicy === 'web-first' && guideIntent === 'quest'
+        ? '本轮是任务/剧情进度类问题。必须用可见行动目标、任务名、章节/任务链来源推断玩家进度；如果只能推断，明确写“推断依据”和“不确定点”，并给下一张最该补充的截图。'
+        : '',
+      retrievalPolicy === 'web-first' && guideIntent
+        ? '如果来源无法直接覆盖全部问题，也要把“来源已确认的内容”和“根据当前画面可推断的内容”分开写；不要把未确认推断伪装成攻略事实。'
         : '',
       knowledgeRoutingText,
       knowledgeEvidenceText,
@@ -1209,6 +1421,7 @@ class AetherAgentRuntime {
       `最近会话：\n${conversationText}`,
       `${fastObservationText}`,
       `攻略来源：\n${knowledgeSummaryText}`,
+      `答案计划：\n${JSON.stringify(answerPlan)}`,
       `rules：\n${ruleText}`,
     ].join('\n\n');
     const content = input.imageDataUrl
@@ -1794,7 +2007,8 @@ class AetherAgentRuntime {
     const facts = this.makeMemoryFacts(input, { ...parsed, observation }, { game: observation.game, scene: observation.scene });
     const updatedMemory = this.writeMemory(input.persona, facts, accountKey);
     addTrace('memory', '写入专属 memory', `写入 ${facts.length} 条 memory，当前画像共 ${updatedMemory.length} 条。`, stepStarted);
-    const playerAnswer = normalizePlayerAnswer(parsed, observation, retrieval.citations || [], retrieval.accountContext);
+    const answerPlan = buildAnswerPlan(input, observation, retrieval);
+    const playerAnswer = normalizePlayerAnswer(parsed, observation, retrieval.citations || [], retrieval.accountContext, retrieval, answerPlan);
     skills = this.finalizeSkills(skills, {
       observation,
       knowledge,
@@ -1847,6 +2061,7 @@ class AetherAgentRuntime {
       knowledgeMatchMode: retrieval.matchMode || "unknown",
       guideIntent: retrieval.guideIntent || '',
       retrievalPolicy: retrieval.retrievalPolicy || 'web-fallback',
+      answerPlan,
       localExactQaMatch: !!retrieval.localExactQaMatch,
       webQueries: retrieval.webQueries || [],
       extractedUrls: retrieval.extractedUrls || [],

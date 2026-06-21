@@ -388,6 +388,219 @@ test('角色池截图会生成玩家版配队答案而不是内部推理记录',
   assert.doesNotMatch(run.answer, /ModelScope|choices|JSON|重试/);
 });
 
+test('任务攻略追问保留问题导向的分段答案', async () => {
+  let modelCalls = 0;
+  const knowledgeService = {
+    status: () => ({ knowledgeEntries: 1, accountCount: 0 }),
+    importEntries: () => undefined,
+    retrieve: async input => ({
+      hits: [{
+        id: 'genshin-border-quest',
+        game: '原神',
+        title: '前往国境线任务流程',
+        content: '前往国境线是魔神任务行动目标，可结合章节标题、任务链步骤和当前目标距离判断玩家处于本章后段。',
+        sourceUrl: 'https://wiki.biligame.com/ys/%E4%BB%BB%E5%8A%A1',
+        score: 18,
+      }],
+      citations: [{ id: 'biligame-border', title: '前往国境线任务流程', url: 'https://wiki.biligame.com/ys/%E4%BB%BB%E5%8A%A1', author: 'Biligame Wiki', version: 'current', updatedAt: Date.now(), sourceType: 'web' }],
+      filteredSources: [],
+      retrievalSource: ['web'],
+      tavilyRequestIds: ['tvly-test'],
+      accountContext: { characters: [], summary: '公开账号上下文未参与本轮任务判断。' },
+      fromCache: false,
+      query: input.query,
+      matchMode: 'web-first',
+      guideIntent: 'quest',
+      retrievalPolicy: 'web-first',
+      localExactQaMatch: false,
+      webTriggered: true,
+      webUsed: true,
+      webQueries: ['原神 前往国境线 任务 章节 剧情进度 剩余时长'],
+      extractedUrls: ['https://wiki.biligame.com/ys/%E4%BB%BB%E5%8A%A1'],
+    }),
+  };
+  const runtime = new AetherAgentRuntime({
+    dataDir: testDataDir('quest-guide-answer'),
+    knowledgeFile,
+    token: 'test-token',
+    knowledgeService,
+    fetchImpl: async () => {
+      modelCalls += 1;
+      if (modelCalls === 1) {
+        return response({
+          id: 'vision-quest',
+          model: 'vision-test',
+          choices: [{ message: { content: JSON.stringify({
+            contextKind: 'game',
+            app: '原神',
+            game: '原神',
+            scene: 'story',
+            summary: '当前剧情目标为前往国境线',
+            facts: ['当前目标：前往国境线', '目标距离 325 米'],
+            ocrText: ['前往国境线'],
+            confidence: 0.9,
+          }) } }],
+        });
+      }
+      return response({
+        id: 'deep-quest',
+        model: 'deep-test',
+        choices: [{ message: { content: JSON.stringify({
+          answer: '这是任务进度判断，需要结合当前目标和任务流程给出具体结论。',
+          playerAnswer: {
+            answerKind: 'guide',
+            conclusion: '“前往国境线”更像是当前魔神任务链中的推进目标，可以用它定位到本章后段，但剩余时长只能估算。',
+            sections: [
+              { title: '可确认信息', items: ['当前目标文字是“前往国境线”。', '画面目标距离约 325 米，说明你还在前往触发点的路上。'] },
+              { title: '合理推断', items: ['结合任务流程来源，这个目标通常不是章节开头，而是已经进入当前任务链的中后段。', '如果后续还有对话、战斗或过场，剩余时间应按 20 到 40 分钟估算，而不是只看当前 325 米。'] },
+              { title: '下一步', items: ['先到达国境线触发点，确认新任务名。', '触发后把任务标题发来，就能继续精确判断还剩几段。'] },
+            ],
+            basis: '参考 Biligame Wiki 任务流程与当前画面目标文字。',
+            sourcesUsed: ['Biligame Wiki'],
+          },
+          observation: {
+            contextKind: 'game',
+            app: '原神',
+            game: '原神',
+            scene: 'story',
+            summary: '当前剧情目标为前往国境线',
+            facts: ['当前目标：前往国境线'],
+            ocrText: ['前往国境线'],
+            confidence: 0.9,
+          },
+          actions: ['到达国境线触发点', '记录触发后的任务标题'],
+        }) } }],
+      });
+    },
+  });
+  const run = await runtime.run({
+    query: '原神前往国境线这个目标在哪个章节，还剩多久？',
+    persona: 'STORY',
+    scene: 'story',
+    mode: 'scan',
+    analysisMode: 'deep',
+    imageDataUrl: 'data:image/jpeg;base64,test',
+    sourceName: '剧情任务截图',
+  });
+  assert.equal(run.playerAnswer.answerKind, 'guide');
+  assert.match(run.answer, /可确认信息：/);
+  assert.match(run.answer, /前往国境线/);
+  assert.match(run.answer, /合理推断：/);
+  assert.match(run.answer, /下一步：/);
+  assert.doesNotMatch(run.answer, /当前队伍：/);
+});
+
+test('深渊机制与配队问题会生成多分面答案计划', async () => {
+  let modelCalls = 0;
+  const knowledgeService = {
+    status: () => ({ knowledgeEntries: 2, accountCount: 1 }),
+    importEntries: () => undefined,
+    retrieve: async input => ({
+      hits: [{
+        id: 'genshin-abyss-boss',
+        game: '原神',
+        title: '12层第3间敌人与打法',
+        content: '第12层第3间需要分别处理上半和下半敌人机制，队伍推荐需要结合破机制、输出窗口和生存压力。',
+        sourceUrl: 'https://wiki.biligame.com/ys/%E6%B7%B1%E6%B8%8A',
+        score: 20,
+      }],
+      citations: [{ id: 'abyss-wiki', title: '12层第3间敌人与打法', url: 'https://wiki.biligame.com/ys/%E6%B7%B1%E6%B8%8A', author: 'Biligame Wiki', version: 'current', updatedAt: Date.now(), sourceType: 'web' }],
+      filteredSources: [],
+      retrievalSource: ['account', 'web'],
+      tavilyRequestIds: ['tvly-abyss'],
+      accountContext: {
+        account: { id: 'a', game: 'genshin', uid: '1', label: '测试账号', active: true, characterCount: 8 },
+        characters: [],
+        summary: '公开角色包含那维莱特、芙宁娜、玛薇卡、希诺宁、枫原万叶、茜特菈莉。',
+      },
+      fromCache: false,
+      query: input.query,
+      matchMode: 'web-first',
+      guideIntent: 'abyss/endgame',
+      retrievalPolicy: 'web-first',
+      localExactQaMatch: false,
+      webTriggered: true,
+      webUsed: true,
+      webQueries: ['原神 12层第3间 机制 打法 推荐队伍 上半 下半'],
+      extractedUrls: ['https://wiki.biligame.com/ys/%E6%B7%B1%E6%B8%8A'],
+    }),
+  };
+  const runtime = new AetherAgentRuntime({
+    dataDir: testDataDir('abyss-guide-answer'),
+    knowledgeFile,
+    token: 'test-token',
+    knowledgeService,
+    fetchImpl: async () => {
+      modelCalls += 1;
+      if (modelCalls === 1) {
+        return response({
+          id: 'vision-abyss',
+          model: 'vision-test',
+          choices: [{ message: { content: JSON.stringify({
+            contextKind: 'game',
+            app: '原神',
+            game: '原神',
+            scene: 'roster',
+            summary: '渊月螺旋12层第3间敌人列表',
+            facts: ['上半 Boss', '下半 Boss', '三星时间目标'],
+            ocrText: ['第12层 第3间', '上半', '下半'],
+            confidence: 0.9,
+          }) } }],
+        });
+      }
+      return response({
+        id: 'deep-abyss',
+        model: 'deep-test',
+        choices: [{ message: { content: JSON.stringify({
+          answer: '这期12-3需要按上下半分别处理机制和队伍。',
+          playerAnswer: {
+            answerKind: 'guide',
+            conclusion: '这不是单纯配队问题，要先按上下半机制拆，再决定队伍。',
+            sections: [
+              { title: '敌人和上下半', items: ['上半和下半都按 Boss 单体处理，队伍分配要避免把同一核心拆到两边。'] },
+              { title: '关键机制', items: ['先观察免伤、蓄力条、召唤物或虚弱窗口，再决定爆发时间。'] },
+              { title: '推荐队伍', items: ['上半优先放玛薇卡、希诺宁、枫原万叶、茜特菈莉这一类爆发队。', '下半优先放那维莱特、芙宁娜核心，容错更高。'] },
+              { title: '打法步骤', items: ['开局先确认机制条或召唤物。', '等机制完成或虚弱窗口再集中交爆发。'] },
+            ],
+            basis: '参考 Biligame Wiki 深渊敌人信息与公开账号角色。',
+            sourcesUsed: ['Biligame Wiki'],
+          },
+          observation: {
+            contextKind: 'game',
+            app: '原神',
+            game: '原神',
+            scene: 'roster',
+            summary: '渊月螺旋12层第3间敌人列表',
+            facts: ['上半 Boss', '下半 Boss'],
+            ocrText: ['第12层 第3间'],
+            confidence: 0.9,
+          },
+          actions: ['先打一次确认机制窗口', '按上下半分配队伍'],
+        }) } }],
+      });
+    },
+  });
+  const run = await runtime.run({
+    query: '这2个boss机制是什么，怎么打，这期新深渊有什么推荐队伍，上半下半怎么分？',
+    persona: 'POWER',
+    scene: 'roster',
+    mode: 'scan',
+    analysisMode: 'deep',
+    imageDataUrl: 'data:image/jpeg;base64,test',
+    sourceName: '深渊敌人截图',
+  });
+  assert.equal(run.playerAnswer.answerKind, 'guide');
+  assert.ok(run.answerPlan.facets.includes('endgame'));
+  assert.ok(run.answerPlan.facets.includes('mechanic'));
+  assert.ok(run.answerPlan.facets.includes('team'));
+  assert.ok(run.answerPlan.requiredSections.includes('关键机制'));
+  assert.ok(run.answerPlan.requiredSections.includes('推荐队伍'));
+  assert.match(run.answer, /敌人和上下半：/);
+  assert.match(run.answer, /关键机制：/);
+  assert.match(run.answer, /推荐队伍：/);
+  assert.doesNotMatch(run.answer, /养成建议：/);
+});
+
 test('不同画像的 memory 相互隔离', () => {
   const runtime = new AetherAgentRuntime({
     dataDir: testDataDir('memory-isolation'),

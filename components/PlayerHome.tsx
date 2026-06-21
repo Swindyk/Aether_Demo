@@ -100,6 +100,8 @@ const safeAnswer = (latest?: AppState['latestRun']) => {
       buildAdvice: latest.playerAnswer.buildAdvice || [],
       basis: latest.playerAnswer.basis || '基于当前画面与可见信息给出判断。',
       sourcesUsed: latest.playerAnswer.sourcesUsed || [],
+      sections: latest.playerAnswer.sections || [],
+      answerKind: latest.playerAnswer.answerKind || (latest.guideIntent && !['build', 'team'].includes(latest.guideIntent) ? 'guide' : 'team'),
       text: latest.playerAnswer.text || latest.answer,
     };
   }
@@ -114,6 +116,8 @@ const safeAnswer = (latest?: AppState['latestRun']) => {
     buildAdvice: lines.slice(2, 5),
     basis: latest.citations.length ? '参考了以下来源证据' : '基于当前画面与可见信息给出判断。',
     sourcesUsed: latest.citations.map(item => item.author || item.title).slice(0, 3),
+    sections: [],
+    answerKind: latest.guideIntent && !['build', 'team'].includes(latest.guideIntent) ? 'guide' : 'team',
     text: lines.join('\n'),
   };
 };
@@ -450,6 +454,7 @@ export const PlayerHome: React.FC = () => {
   const latestError = activeRun?.source === 'error' && activeRun.errors?.length ? activeRun.errors[activeRun.errors.length - 1] : undefined;
   const staleTokenError = Boolean(latestError?.message.includes('token') && state?.runtime.tokenConfigured);
   const displayAnswer = safeAnswer(activeRun);
+  const showGuideAnswer = Boolean(displayAnswer && (displayAnswer.answerKind === 'guide' || (activeRun?.guideIntent && !['build', 'team'].includes(activeRun.guideIntent))));
   const activeSummary = displayText(conversation?.lastObservation?.summary || activeRun?.observation.summary, '还没有解读过画面');
 
   return (
@@ -597,43 +602,51 @@ export const PlayerHome: React.FC = () => {
               <div className="mt-5">
                 {displayAnswer && (
                   <div className="space-y-4">
-                    <div>
-                      <p className="text-xs text-aether-200">结论</p>
-                      <p className="mt-1 text-base font-semibold leading-7 text-white/85">{displayAnswer.conclusion}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-aether-200">当前队伍</p>
-                      <p className="mt-1 text-sm leading-6 text-white/62">{displayAnswer.currentTeam}</p>
-                    </div>
-                    {displayAnswer.betterTeams.length > 0 && (
-                      <div>
-                        <p className="text-xs text-aether-200">更优建议</p>
-                        <div className="mt-2 space-y-2">
-                          {displayAnswer.betterTeams.map(team => (
-                            <div key={`${team.title}-${team.members.join('-')}`} className="rounded-2xl border border-white/8 bg-black/15 p-3">
-                              <p className="text-sm font-medium text-white/82">
-                                {team.title}
-                                {team.members.length ? ` · ${team.members.join(' / ')}` : ''}
-                              </p>
-                              <p className="mt-1 text-xs leading-5 text-white/50">{team.reason}</p>
+                    {showGuideAnswer ? (
+                      <div className="rounded-2xl border border-aether-300/15 bg-aether-300/[0.035] px-4 py-3 text-sm leading-7 text-white/72">
+                        <p className="whitespace-pre-line">{displayAnswer.text}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="text-xs text-aether-200">结论</p>
+                          <p className="mt-1 text-base font-semibold leading-7 text-white/85">{displayAnswer.conclusion}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-aether-200">当前队伍</p>
+                          <p className="mt-1 text-sm leading-6 text-white/62">{displayAnswer.currentTeam}</p>
+                        </div>
+                        {displayAnswer.betterTeams.length > 0 && (
+                          <div>
+                            <p className="text-xs text-aether-200">更优建议</p>
+                            <div className="mt-2 space-y-2">
+                              {displayAnswer.betterTeams.map(team => (
+                                <div key={`${team.title}-${team.members.join('-')}`} className="rounded-2xl border border-white/8 bg-black/15 p-3">
+                                  <p className="text-sm font-medium text-white/82">
+                                    {team.title}
+                                    {team.members.length ? ` · ${team.members.join(' / ')}` : ''}
+                                  </p>
+                                  <p className="mt-1 text-xs leading-5 text-white/50">{team.reason}</p>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      </div>
+                          </div>
+                        )}
+                        {displayAnswer.buildAdvice.length > 0 && (
+                          <div>
+                            <p className="text-xs text-aether-200">养成建议</p>
+                            <div className="mt-2 space-y-1.5">
+                              {displayAnswer.buildAdvice.slice(0, 3).map(item => (
+                                <p key={item} className="text-xs leading-5 text-white/55">· {item}</p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <p className="rounded-2xl border border-aether-300/15 bg-aether-300/[0.045] px-4 py-3 text-xs leading-5 text-white/50">
+                          依据：{displayAnswer.basis}
+                        </p>
+                      </>
                     )}
-                    {displayAnswer.buildAdvice.length > 0 && (
-                      <div>
-                        <p className="text-xs text-aether-200">养成建议</p>
-                        <div className="mt-2 space-y-1.5">
-                          {displayAnswer.buildAdvice.slice(0, 3).map(item => (
-                            <p key={item} className="text-xs leading-5 text-white/55">· {item}</p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <p className="rounded-2xl border border-aether-300/15 bg-aether-300/[0.045] px-4 py-3 text-xs leading-5 text-white/50">
-                      依据：{displayAnswer.basis}
-                    </p>
                   </div>
                 )}
                 {latestError && (
@@ -689,7 +702,10 @@ export const PlayerHome: React.FC = () => {
                       value={followUpText}
                       onChange={event => setFollowUpText(event.target.value)}
                       onKeyDown={event => {
-                        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void askFollowUp();
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault();
+                          void askFollowUp();
+                        }
                       }}
                       placeholder="继续追问，按 Enter 发送"
                       className="min-h-16 flex-1 resize-none rounded-xl border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/75 outline-none placeholder:text-white/25 focus:border-aether-300/45"

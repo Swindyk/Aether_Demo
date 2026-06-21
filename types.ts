@@ -300,13 +300,28 @@ export interface PlayerTeamSuggestion {
   reason: string;
 }
 
+export interface PlayerAnswerSection {
+  title: string;
+  items: string[];
+}
+
+export interface AgentAnswerPlan {
+  answerKind: 'team' | 'guide';
+  guideIntent?: GuideIntent;
+  facets: string[];
+  requiredSections: string[];
+  requirements: string[];
+}
+
 export interface PlayerAnswer {
+  answerKind?: 'team' | 'guide' | 'screen';
   conclusion: string;
   currentTeam: string;
   betterTeams: PlayerTeamSuggestion[];
   buildAdvice: string[];
   basis: string;
   sourcesUsed: string[];
+  sections?: PlayerAnswerSection[];
   text: string;
 }
 
@@ -345,6 +360,7 @@ export interface KnowledgeSearchResult {
   matchMode?: string;
   guideIntent?: GuideIntent;
   retrievalPolicy?: RetrievalPolicy;
+  answerPlan?: AgentAnswerPlan;
   localExactQaMatch?: boolean;
   webQueries?: string[];
   extractedUrls?: string[];

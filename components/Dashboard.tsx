@@ -457,7 +457,10 @@ export const Dashboard: React.FC = () => {
                   value={followUpText}
                   onChange={event => setFollowUpText(event.target.value)}
                   onKeyDown={event => {
-                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void askFollowUp();
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void askFollowUp();
+                    }
                   }}
                   placeholder="继续追问这条历史会话"
                   className="min-h-14 flex-1 resize-none border border-white/10 bg-[#08121a] px-3 py-2 text-sm text-white/75 outline-none placeholder:text-white/25 focus:border-aether-300/45"
@@ -716,6 +719,13 @@ const KnowledgeTab: React.FC<{ run: AgentRunResult; state?: AppState }> = ({ run
               <Metric label="Exact QA" value={run.localExactQaMatch ? 'yes' : 'no'} />
               <Metric label="Extracted URLs" value={`${run.extractedUrls?.length || 0}`} />
             </div>
+            {run.answerPlan && (
+              <div className="mt-4 border border-aether-300/15 bg-aether-300/[0.04] p-3 text-xs">
+                <p className="font-medium text-aether-100">答案计划</p>
+                <p className="mt-2 text-white/55">分面：{run.answerPlan.facets.length ? run.answerPlan.facets.join(' / ') : '未拆分'}</p>
+                <p className="mt-1 text-white/45">必须覆盖：{run.answerPlan.requiredSections.length ? run.answerPlan.requiredSections.join(' / ') : '默认回答结构'}</p>
+              </div>
+            )}
             {run.webQueries?.length ? (
               <p className="mt-3 break-all font-mono text-[10px] leading-5 text-white/32">{run.webQueries.slice(0, 6).join('\n')}</p>
             ) : null}

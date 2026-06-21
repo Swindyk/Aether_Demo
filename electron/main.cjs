@@ -259,12 +259,12 @@ const createAnswerWindow = () => {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: true,
-    focusable: false,
+    focusable: true,
     show: false,
     webPreferences: commonWebPreferences(),
   });
   answerWindow.setAlwaysOnTop(true, 'floating');
-  answerWindow.setIgnoreMouseEvents(true);
+  answerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   guardWindowLoad(answerWindow, '以太短答案卡');
   loadRole(answerWindow, 'answer');
   answerWindow.on('closed', () => {
@@ -382,9 +382,10 @@ const runUiSmoke = async outputDir => {
     maximizable: answerWindow.isMaximizable(),
     fullscreenable: answerWindow.isFullScreenable(),
     focusable: answerWindow.isFocusable(),
+    focused: answerWindow.isFocused(),
   };
   writeJson(path.join(outputDir, 'answer-window-state.json'), answerState);
-  if (!answerState.visible || answerState.resizable || answerState.maximizable || answerState.fullscreenable || answerState.focusable) {
+  if (!answerState.visible || answerState.resizable || answerState.maximizable || answerState.fullscreenable || !answerState.focusable || answerState.focused) {
     throw new Error(`短答案卡能力不符合约束：${JSON.stringify(answerState)}`);
   }
   await saveWindowCapture(answerWindow, path.join(outputDir, 'answer-card.png'));
@@ -773,11 +774,11 @@ const runAgent = async input => {
       currentConversationId = run.conversationId;
       currentAccountKey = run.accountKey || accountKey;
     }
-    broadcast('agent:run-complete', run);
     const runError = run.errors?.length ? run.errors[run.errors.length - 1] : undefined;
     setAssistantStatus(run.source === 'error' ? 'error' : 'ready', run.source === 'error' ? (runError?.message || run.summary) : '回答已准备', {
       latestRunId: run.id,
     });
+    broadcast('agent:run-complete', run);
     return run;
   } catch (error) {
     setAssistantStatus('error', error instanceof Error ? error.message : '这次没有完成画面解读');

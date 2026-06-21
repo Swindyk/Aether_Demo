@@ -199,11 +199,17 @@ export const PlayerHome: React.FC = () => {
   useEffect(() => {
     void refresh();
     const removeRun = window.aether?.onRunComplete(run => {
+      setBusy('');
       setState(previous => previous ? { ...previous, latestRun: run } : previous);
       void refresh();
     });
     const removeSettings = window.aether?.onSettingsChanged(settings => setState(previous => previous ? { ...previous, settings } : previous));
-    const removeStatus = window.aether?.onAssistantStatusChanged(setStatus);
+    const removeStatus = window.aether?.onAssistantStatusChanged(nextStatus => {
+      setStatus(nextStatus);
+      if (nextStatus.state === 'ready' || nextStatus.state === 'error' || nextStatus.state === 'idle') {
+        setBusy('');
+      }
+    });
     const removeShowLatest = window.aether?.onShowLatest(() => document.getElementById('latest-answer')?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     const removeConversationSelected = window.aether?.onConversationSelected(conversation => {
       setState(previous => previous ? { ...previous, currentConversation: conversation } : previous);
@@ -258,6 +264,7 @@ export const PlayerHome: React.FC = () => {
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '本次启动分析失败，请稍后重试。');
+    } finally {
       setBusy('');
     }
   };
